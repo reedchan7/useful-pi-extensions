@@ -14,8 +14,8 @@ SHELL := /bin/bash
 REMOTE ?= github.com/reedchan7/useful-pi-extensions
 # Tag pinned by `make install-github`.
 TAG ?= v0.1.0
-# One-time password from an authenticator app. npm requires 2FA for every publish,
-# so `make publish OTP=123456` is the interactive path.
+# One-time password for registries that issue TOTP codes. npm does not: its 2FA is
+# a WebAuthn security key, so npm publishes with a bypass-2FA token instead.
 OTP ?=
 
 ##
@@ -89,7 +89,7 @@ pack: ## Show the exact tarball npm would publish
 	npm pack --dry-run
 
 .PHONY: publish
-publish: ## Publish to npmjs.com (needs `npm login` + `OTP=` unless a bypass-2FA token is set)
+publish: ## Publish to npmjs.com (needs a bypass-2FA granular token, not an OTP)
 	npm publish --access public $(if $(OTP),--otp=$(OTP),)
 	@printf '\nthe gallery at https://pi.dev/packages indexes it within minutes\n'
 
