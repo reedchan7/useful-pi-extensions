@@ -2,6 +2,8 @@
 
 English | [中文](README_CN.md)
 
+[npm](https://www.npmjs.com/package/@reedchan/statusline) · [pi packages gallery](https://pi.dev/packages/@reedchan/statusline) · [repository](https://github.com/reedchan7/useful-pi-extensions)
+
 Replaces pi's footer with a labelled two-row one. Every value carries a word, so nothing has to be
 decoded from a symbol or remembered from a legend.
 

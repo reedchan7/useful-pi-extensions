@@ -5,6 +5,9 @@ English | [中文](README_CN.md)
 A small collection of [pi](https://pi.dev) extensions, installed with one command. Every extension
 in it is also published on its own, so you can take the collection or just the piece you want.
 
+- `useful-pi-extensions`, the collection — [npm](https://www.npmjs.com/package/useful-pi-extensions) · [pi packages gallery](https://pi.dev/packages/useful-pi-extensions)
+- `@reedchan/statusline` — [npm](https://www.npmjs.com/package/@reedchan/statusline) · [pi packages gallery](https://pi.dev/packages/@reedchan/statusline)
+
 ```sh
 pi install npm:useful-pi-extensions
 ```

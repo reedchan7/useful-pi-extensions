@@ -5,6 +5,9 @@
 一组 [pi](https://pi.dev) 扩展，一行命令即可安装。其中的每个扩展也会单独发布，
 所以你要么整套装，要么只取其中一件。
 
+- `useful-pi-extensions`（合集）— [npm](https://www.npmjs.com/package/useful-pi-extensions) · [pi packages 画廊](https://pi.dev/packages/useful-pi-extensions)
+- `@reedchan/statusline` — [npm](https://www.npmjs.com/package/@reedchan/statusline) · [pi packages 画廊](https://pi.dev/packages/@reedchan/statusline)
+
 ```sh
 pi install npm:useful-pi-extensions
 ```

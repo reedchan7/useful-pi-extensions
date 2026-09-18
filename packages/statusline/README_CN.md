@@ -2,6 +2,8 @@
 
 [English](README.md) | 中文
 
+[npm](https://www.npmjs.com/package/@reedchan/statusline) · [pi packages 画廊](https://pi.dev/packages/@reedchan/statusline) · [仓库](https://github.com/reedchan7/useful-pi-extensions)
+
 替换 pi 的 footer，改成带文字标签的两行。每个值都带一个词，不需要靠符号猜、也不需要记图例。
 
 ```
