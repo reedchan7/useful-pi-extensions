@@ -23,7 +23,6 @@ addition. If you want pi's stock footer back, remove this package and `/reload`.
 
 <img width="897" height="45" alt="Warp 2026-09-18 16 20 27" src="https://github.com/user-attachments/assets/7ae64213-cb05-4440-835e-a633796a87f9" />
 
-
 ## Install
 
 ```sh

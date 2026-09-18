@@ -78,6 +78,19 @@ docs-check: ## Verify every README has its README_CN counterpart
 	bun run docs:check
 
 ##
+## Publish
+##
+
+.PHONY: pack
+pack: ## Show the exact tarball npm would publish
+	npm pack --dry-run
+
+.PHONY: publish
+publish: ## Publish to npmjs.com (requires `npm login`; gated by prepublishOnly)
+	npm publish --access public
+	@printf '\nthe gallery at https://pi.dev/packages indexes it within minutes\n'
+
+##
 ## Install into pi
 ##
 

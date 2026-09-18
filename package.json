@@ -1,13 +1,31 @@
 {
   "name": "useful-pi-extensions",
   "version": "0.1.0",
-  "description": "A small collection of pi extensions, installed with one command.",
+  "description": "A small collection of pi extensions, installed with one command — a labelled status line with context pressure, cache, cost, effort, TTFT and tokens/sec.",
   "keywords": [
-    "pi-package"
+    "bun",
+    "cli",
+    "footer",
+    "pi",
+    "pi-extension",
+    "pi-package",
+    "statusline",
+    "terminal",
+    "tui",
+    "typescript"
   ],
+  "homepage": "https://github.com/reedchan7/useful-pi-extensions#readme",
+  "bugs": {
+    "url": "https://github.com/reedchan7/useful-pi-extensions/issues"
+  },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/reedchan7/useful-pi-extensions.git"
+  },
   "files": [
     "extensions",
+    "!extensions/**/*.test.ts",
     "README.md",
     "README_CN.md",
     "LICENSE"
@@ -20,6 +38,7 @@
     "fmt:check": "oxfmt --check .",
     "lint": "oxlint --deny-warnings .",
     "lint:fix": "oxlint --fix .",
+    "prepublishOnly": "bun run check",
     "test": "bun test",
     "test:changed": "git rev-parse --verify --quiet origin/main >/dev/null && bun test --changed=origin/main || bun test",
     "typecheck": "tsc -p tsconfig.json"
