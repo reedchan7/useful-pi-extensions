@@ -1,7 +1,12 @@
 node_modules/
 
+# Never commit a registry token: publishing from a public repository means a
+# stray .npmrc is a leaked credential, not a build artifact.
+.npmrc
+
 # Local tooling output
 coverage/
 *.tsbuildinfo
+*.tgz
 
 .DS_Store
