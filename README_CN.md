@@ -16,6 +16,12 @@ pi install git:github.com/reedchan7/useful-pi-extensions
 
 footer 只能有一个扩展占用，所以 `statusline` 是**替换**而不是叠加。想回到 pi 原生 footer，移除本包再 `/reload`。
 
+## 效果图
+
+### statusline
+
+<img width="897" height="45" alt="Warp 2026-09-18 16 20 27" src="https://github.com/user-attachments/assets/7ae64213-cb05-4440-835e-a633796a87f9" />
+
 ## 安装
 
 ```sh
