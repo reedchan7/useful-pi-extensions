@@ -1,0 +1,49 @@
+{
+  "name": "useful-pi-extensions",
+  "version": "0.1.0",
+  "description": "A small collection of pi extensions, installed with one command.",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "files": [
+    "extensions",
+    "README.md",
+    "README_CN.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "scripts": {
+    "check": "bun run fmt:check && bun run lint && bun run typecheck && bun run docs:check && bun run test",
+    "docs:check": "bun tools/check-docs-pairing/src/index.ts",
+    "fmt": "oxfmt --write .",
+    "fmt:check": "oxfmt --check .",
+    "lint": "oxlint --deny-warnings .",
+    "lint:fix": "oxlint --fix .",
+    "test": "bun test",
+    "test:changed": "git rev-parse --verify --quiet origin/main >/dev/null && bun test --changed=origin/main || bun test",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "@types/bun": "1.4.2",
+    "lefthook": "2.1.14",
+    "oxfmt": "0.68.0",
+    "oxlint": "1.83.0",
+    "oxlint-tsgolint": "7.0.2002",
+    "typescript": "7.0.2"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  }
+}

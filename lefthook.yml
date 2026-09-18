@@ -1,0 +1,37 @@
+# Git hooks (lefthook). Commits stay fast and only touch staged files; the full
+# repository gate matrix belongs to `make check` and to CI.
+#
+# Install once with `make hooks` (or `bunx lefthook install`).
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: format (staged)
+      glob: '*.{ts,json,jsonc,md,yml,yaml}'
+      run: bunx oxfmt --write {staged_files}
+      stage_fixed: true
+
+    - name: lint (staged)
+      glob: '*.ts'
+      run: bunx oxlint --fix --no-error-on-unmatched-pattern {staged_files}
+      stage_fixed: true
+
+    - name: docs pairing (README / README_CN)
+      glob: '**/README*.md'
+      run: bun run docs:check
+
+    - name: whitespace
+      run: git diff --cached --check
+
+pre-push:
+  jobs:
+    - name: typecheck
+      run: bun run typecheck
+
+    - name: tests (changed since origin/main)
+      run: bun run test:changed
+
+commit-msg:
+  jobs:
+    - name: conventional commit
+      run: bun tools/check-commit-msg/src/index.ts {1}

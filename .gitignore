@@ -1,0 +1,7 @@
+node_modules/
+
+# Local tooling output
+coverage/
+*.tsbuildinfo
+
+.DS_Store

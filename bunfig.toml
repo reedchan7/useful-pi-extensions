@@ -1,0 +1,10 @@
+# Bun configuration.
+#
+# The repository pins its whole toolchain (typescript, oxlint, oxfmt, lefthook) to
+# exact versions, so an install must not widen them.
+
+[install]
+exact = true
+
+[install.lockfile]
+save = true

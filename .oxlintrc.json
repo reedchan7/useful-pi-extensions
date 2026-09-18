@@ -1,0 +1,79 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import", "promise"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "warn",
+    // The style category is opted into rule by rule below: as a category it carries
+    // ESLint's stylistic-formatting family (no-magic-numbers, one-var, sort-keys,
+    // func-style), which formats by opinion rather than catching a defect, and the
+    // formatter already owns formatting.
+    "style": "off"
+  },
+  "env": {
+    "builtin": true
+  },
+  "options": {
+    "denyWarnings": true,
+    "reportUnusedDisableDirectives": "error",
+    "typeAware": true
+  },
+  "rules": {
+    "no-console": "error",
+    "no-alert": "error",
+    "no-var": "error",
+    "prefer-const": "error",
+    "eqeqeq": ["error", "always", { "null": "ignore" }],
+    "no-param-reassign": "error",
+    "consistent-return": "error",
+    "no-implicit-coercion": "error",
+    "no-else-return": "error",
+    "object-shorthand": "error",
+    "prefer-template": "error",
+    "no-throw-literal": "error",
+    "no-await-in-loop": "warn",
+
+    "typescript/no-explicit-any": "error",
+    "typescript/no-non-null-assertion": "error",
+    "typescript/consistent-type-imports": "error",
+    "typescript/no-unsafe-assignment": "error",
+    "typescript/no-unsafe-member-access": "error",
+    "typescript/no-unsafe-return": "error",
+    "typescript/switch-exhaustiveness-check": "error",
+    "typescript/no-unnecessary-condition": "warn",
+
+    "import/no-cycle": "error",
+
+    "unicorn/prefer-node-protocol": "error",
+    "unicorn/no-array-sort": "error",
+    "unicorn/prefer-number-properties": "error",
+    "unicorn/throw-new-error": "error",
+
+    "promise/no-return-wrap": "error",
+    "promise/param-names": "error"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/tests/**/*.ts"],
+      "rules": {
+        "typescript/no-explicit-any": "off",
+        "typescript/no-non-null-assertion": "off",
+        "typescript/no-unsafe-assignment": "off",
+        "typescript/no-unsafe-member-access": "off",
+        // Tests build partial doubles of pi's types on purpose: a full Theme would
+        // be noise. The cast is the fixture, and it is the only place it is allowed.
+        "typescript/no-unsafe-type-assertion": "off",
+        "no-console": "off"
+      }
+    },
+    {
+      "files": ["tools/**"],
+      "rules": {
+        // These are command-line programs: their entire output is console.
+        "no-console": "off"
+      }
+    }
+  ],
+  "ignorePatterns": ["node_modules/**", "coverage/**"]
+}
