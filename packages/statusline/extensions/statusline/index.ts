@@ -18,6 +18,7 @@
  * stepStartTime; decodeMs = completedTime - firstTokenTime; tok/s = usage.output / (decodeMs / 1000)
  */
 
+import { readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -58,8 +59,19 @@ const CONFIG_PATH = join(homedir(), '.pi', 'agent', 'statusline.json')
  * bug. Editing the file therefore takes effect on `/reload`.
  */
 async function loadCurrency(notify: (message: string) => void): Promise<Currency> {
-  const file = Bun.file(CONFIG_PATH)
-  const text = (await file.exists()) ? await file.text() : null
+  try {
+    await stat(CONFIG_PATH)
+  } catch {
+    // No config file is the normal case, and it means USD.
+    return USD
+  }
+  let text: string
+  try {
+    text = await readFile(CONFIG_PATH, 'utf8')
+  } catch {
+    notify('statusline.json exists but could not be read, showing USD')
+    return USD
+  }
   const { currency, problem } = currencyFromConfig(text)
   if (problem !== null) notify(problem)
   return currency

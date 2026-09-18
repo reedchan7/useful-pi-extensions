@@ -55,6 +55,18 @@
   },
   "overrides": [
     {
+      "files": ["packages/*/extensions/**"],
+      "rules": {
+        // Extensions run through jiti in Node, not through Bun. A Bun global therefore type checks
+        // (the toolchain's types are global) and passes every unit test (bun test defines it) while
+        // throwing the moment pi loads the extension — which is how a broken release shipped once.
+        "no-restricted-globals": [
+          "error",
+          { "name": "Bun", "message": "pi loads extensions in Node; use node:fs instead" }
+        ]
+      }
+    },
+    {
       "files": ["**/*.test.ts", "**/tests/**/*.ts"],
       "rules": {
         "typescript/no-explicit-any": "off",
