@@ -33,6 +33,6 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["extensions/**/*.ts", "tools/**/*.ts"],
+  "include": ["packages/**/*.ts", "tools/**/*.ts"],
   "exclude": ["node_modules"]
 }

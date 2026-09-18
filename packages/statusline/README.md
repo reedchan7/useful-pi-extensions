@@ -81,7 +81,11 @@ So the rate excludes prefill and time-to-first-token, which is the industry-stan
 ## Install
 
 ```sh
-pi install git:github.com/reedchan7/useful-pi-extensions
+# on its own
+pi install npm:@reedchan/statusline
+
+# or as part of the collection, which installs every extension in the repository
+pi install npm:useful-pi-extensions
 ```
 
 Then `/reload`.

@@ -2,17 +2,18 @@
 
 English | [中文](README_CN.md)
 
-A small collection of [pi](https://pi.dev) extensions, installed with one command.
+A small collection of [pi](https://pi.dev) extensions, installed with one command. Every extension
+in it is also published on its own, so you can take the collection or just the piece you want.
 
 ```sh
-pi install git:github.com/reedchan7/useful-pi-extensions
+pi install npm:useful-pi-extensions
 ```
 
 ## What is in here
 
-| Extension                                       | What it does                                                                                                                                                                                            |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`statusline`](extensions/statusline/README.md) | Replaces pi's footer with a labelled two-row one: context pressure as a fixed-size meter, cache and cost, the model and effort level, and the latest turn's TTFT and decode throughput in tokens/second |
+| Extension                                               | What it does                                                                                                                                                                                            |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`@reedchan/statusline`](packages/statusline/README.md) | Replaces pi's footer with a labelled two-row one: context pressure as a fixed-size meter, cache and cost, the model and effort level, and the latest turn's TTFT and decode throughput in tokens/second |
 
 Only one extension owns the footer, so `statusline` is a complete replacement rather than an
 addition. If you want pi's stock footer back, remove this package and `/reload`.
@@ -26,17 +27,24 @@ addition. If you want pi's stock footer back, remove this package and `/reload`.
 ## Install
 
 ```sh
-# from the repository
-pi install git:github.com/reedchan7/useful-pi-extensions
+# the collection: every extension in this repository
+pi install npm:useful-pi-extensions
 
-# pinned to a tag
-pi install git:github.com/reedchan7/useful-pi-extensions@v0.1.0
+# one extension on its own
+pi install npm:@reedchan/statusline
+
+# from the repository, pinned to a tag
+pi install git:github.com/reedchan7/useful-pi-extensions@v1.0.0
 
 # from a local checkout (development)
 pi install /absolute/path/to/useful-pi-extensions
 ```
 
 Then reload pi in the running session with `/reload`, or start a new one.
+
+> **Install one surface, not both.** The collection and the individual package ship the same
+> extension file, so installing `useful-pi-extensions` _and_ `@reedchan/statusline` loads it twice.
+> Nothing breaks, but there is nothing to gain either.
 
 > **Removing a loose copy first.** If you were running the extension as a single file in
 > `~/.pi/agent/extensions/`, delete that file before installing this package. Both would load, and
@@ -50,17 +58,26 @@ Then reload pi in the running session with `/reload`, or start a new one.
 
 ## Layout
 
+Two things are published from this repository: the collection, which is the repository root, and
+each extension under `packages/`, on its own.
+
 ```
-extensions/            # each subdirectory is one extension; pi discovers <name>/index.ts
-  statusline/
-    index.ts           # pi entry point: events and footer wiring
-    render.ts          # pure helpers: number formatting, the meter, row layout
-    render.test.ts     # unit tests for render.ts
+package.json                     # the collection package, published as useful-pi-extensions
+packages/
+  statusline/                    # published as @reedchan/statusline
+    package.json
+    extensions/statusline/
+      index.ts                   # pi entry point: events and footer wiring
+      render.ts                  # pure helpers: number formatting, the meter, row layout
+      render.test.ts             # unit tests for render.ts
+tools/                           # repository tooling: docs pairing, commit lint, publishing
 ```
 
-`package.json` declares `"pi": { "extensions": ["./extensions"] }` and carries the `pi-package`
-keyword so the package is discoverable. pi resolves the manifest, finds every
-`extensions/*/index.ts`, and loads it — no build step, no bundling.
+The collection declares `"pi": { "extensions": ["packages/*/extensions"] }` and the individual
+package declares `"./extensions"`. pi resolves the glob, finds every `extensions/<name>/index.ts`
+and loads it — no build step, no bundling. Adding an extension is therefore adding a directory under
+`packages/`: no manifest needs editing, because the collection's glob picks the new package up on
+its own, and `make publish` discovers it the same way.
 
 ## Development
 
@@ -79,7 +96,7 @@ make help         # list every target
 | Lint   | `bun run lint`       | oxlint in type-aware mode with `--deny-warnings`, so a warning fails the run                                                                                           |
 | Types  | `bun run typecheck`  | `--strict` plus `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes` and `verbatimModuleSyntax`, which is what keeps every file loadable by pi without a transform |
 | Docs   | `bun run docs:check` | every `README.md` has a `README_CN.md` with the same heading sequence and a working language switcher                                                                  |
-| Tests  | `bun test`           | the unit tests under `extensions/*/`                                                                                                                                   |
+| Tests  | `bun test`           | the unit tests under `packages/*/`                                                                                                                                     |
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/): the `commit-msg` hook
 rejects a subject that is not `type(scope): summary`, and the pre-commit hook formats and lints only

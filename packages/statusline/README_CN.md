@@ -71,7 +71,11 @@ tok/s    = usage.output / (decodeMs / 1000)
 ## 安装
 
 ```sh
-pi install git:github.com/reedchan7/useful-pi-extensions
+# 单独安装
+pi install npm:@reedchan/statusline
+
+# 或作为合集的一部分安装，会装上本仓库的全部扩展
+pi install npm:useful-pi-extensions
 ```
 
 然后 `/reload`。

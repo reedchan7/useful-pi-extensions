@@ -1,9 +1,9 @@
-# useful-pi-extensions — one entry point for checking and installing the
-# extensions in this repository.
+# useful-pi-extensions — one entry point for checking, publishing and installing
+# the packages in this repository.
 #
-# Development uses Bun for type checking and tests. pi loads the extensions
-# straight out of ./extensions, so there is no build step and no bundling: what
-# is in the tree is what pi runs.
+# The repository root is the collection package and each extension under packages/ is
+# published on its own. pi loads the extensions straight out of the tree, so there is
+# no build step and no bundling: what is in the tree is what pi runs.
 
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
@@ -13,10 +13,11 @@ SHELL := /bin/bash
 # Git remote users install from; matches the `pi install` spec below.
 REMOTE ?= github.com/reedchan7/useful-pi-extensions
 # Tag pinned by `make install-github`.
-TAG ?= v0.1.0
-# One-time password for registries that issue TOTP codes. npm does not: its 2FA is
-# a WebAuthn security key, so npm publishes with a bypass-2FA token instead.
-OTP ?=
+TAG ?= v1.0.0
+# Restrict a publish to one package, by its npm name: PKG=@reedchan/statusline
+PKG ?=
+# DRY=1 walks the whole publish path and publishes nothing.
+DRY ?=
 
 ##
 ## Help
@@ -25,7 +26,7 @@ OTP ?=
 .PHONY: help
 help: ## Show this help
 	@printf 'useful-pi-extensions\n\n'
-	@printf 'Usage: make <target> [TAG=%s]\n' '$(TAG)'
+	@printf 'Usage: make <target> [TAG=%s] [PKG=%s] [DRY=%s]\n' '$(TAG)' '$(PKG)' '$(DRY)'
 	@awk ' \
 		/^## [A-Za-z]/ { sub(/^## /, ""); printf "\n\033[1m%s\033[0m\n", $$0; next } \
 		/^[a-zA-Z0-9_-]+:.*## / { \
@@ -85,13 +86,15 @@ docs-check: ## Verify every README has its README_CN counterpart
 ##
 
 .PHONY: pack
-pack: ## Show the exact tarball npm would publish
-	npm pack --dry-run
+pack: ## Show the exact tarballs npm would publish
+	@for dir in . packages/*/; do \
+		printf '\n\033[1m== %s\033[0m\n' "$$dir"; \
+		(cd "$$dir" && npm pack --dry-run); \
+	done
 
 .PHONY: publish
-publish: ## Publish to npmjs.com (needs a bypass-2FA granular token, not an OTP)
-	npm publish --access public $(if $(OTP),--otp=$(OTP),)
-	@printf '\nthe gallery at https://pi.dev/packages indexes it within minutes\n'
+publish: ## Publish the packages whose version is not on npm yet
+	bun run publish:changed $(if $(PKG),--only $(PKG),) $(if $(DRY),--dry-run,)
 
 ##
 ## Install into pi

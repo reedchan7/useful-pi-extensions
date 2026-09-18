@@ -1,6 +1,6 @@
 {
   "name": "useful-pi-extensions",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "A small collection of pi extensions, installed with one command — a labelled status line with context pressure, cache, cost, effort, TTFT and tokens/sec.",
   "keywords": [
     "bun",
@@ -23,9 +23,12 @@
     "type": "git",
     "url": "git+https://github.com/reedchan7/useful-pi-extensions.git"
   },
+  "workspaces": [
+    "packages/*"
+  ],
   "files": [
-    "extensions",
-    "!extensions/**/*.test.ts",
+    "packages/*/extensions/**",
+    "!packages/*/extensions/**/*.test.ts",
     "README.md",
     "README_CN.md",
     "LICENSE"
@@ -38,7 +41,7 @@
     "fmt:check": "oxfmt --check .",
     "lint": "oxlint --deny-warnings .",
     "lint:fix": "oxlint --fix .",
-    "prepublishOnly": "bun run check",
+    "publish:changed": "bun tools/publish-changed/src/index.ts",
     "test": "bun test",
     "test:changed": "git rev-parse --verify --quiet origin/main >/dev/null && bun test --changed=origin/main || bun test",
     "typecheck": "tsc -p tsconfig.json"
@@ -53,16 +56,12 @@
     "oxlint-tsgolint": "7.0.2002",
     "typescript": "7.0.2"
   },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
-  },
   "engines": {
     "bun": ">=1.4.0"
   },
   "pi": {
     "extensions": [
-      "./extensions"
+      "packages/*/extensions"
     ],
     "image": "https://github.com/user-attachments/assets/7ae64213-cb05-4440-835e-a633796a87f9"
   }

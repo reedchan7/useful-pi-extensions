@@ -1,0 +1,45 @@
+{
+  "name": "@reedchan/statusline",
+  "version": "0.1.0",
+  "description": "Replaces pi's footer with a labelled two-row status line: context pressure as a fixed-size meter, cache and cost, the model and effort level, and the latest turn's TTFT and decode throughput in tokens/second.",
+  "keywords": [
+    "bun",
+    "cli",
+    "footer",
+    "pi",
+    "pi-extension",
+    "pi-package",
+    "statusline",
+    "terminal",
+    "tui",
+    "typescript"
+  ],
+  "homepage": "https://github.com/reedchan7/useful-pi-extensions/tree/main/packages/statusline#readme",
+  "bugs": {
+    "url": "https://github.com/reedchan7/useful-pi-extensions/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/reedchan7/useful-pi-extensions.git",
+    "directory": "packages/statusline"
+  },
+  "files": [
+    "extensions",
+    "!extensions/**/*.test.ts",
+    "README.md",
+    "README_CN.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ],
+    "image": "https://github.com/user-attachments/assets/7ae64213-cb05-4440-835e-a633796a87f9"
+  }
+}
