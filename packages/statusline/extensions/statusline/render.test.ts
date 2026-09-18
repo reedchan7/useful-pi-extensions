@@ -15,14 +15,18 @@ import { visibleWidth } from '@earendil-works/pi-tui'
 import {
   bar,
   barColor,
+  contextRow,
+  currencyFromConfig,
   formatCost,
   formatLatency,
   formatTokens,
   formatTps,
   isQuietStatus,
+  parseCurrency,
   percentColor,
   row,
   shortenPath,
+  USD,
 } from './render.ts'
 
 /** Colour is invisible in these assertions, so the stub drops it. */
@@ -70,10 +74,74 @@ describe('formatLatency', () => {
 })
 
 describe('formatCost', () => {
-  test('trims the padding zero that toFixed(3) adds', () => {
+  test('trims the padding zeros that toFixed(3) adds, all of them', () => {
     expect(formatCost(0.38)).toBe('$0.38')
     expect(formatCost(0.003)).toBe('$0.003')
     expect(formatCost(1.25)).toBe('$1.25')
+    expect(formatCost(1.5)).toBe('$1.5')
+    expect(formatCost(10)).toBe('$10')
+  })
+
+  test('converts at the configured rate, because pi only ever prices in USD', () => {
+    const cny = { symbol: '¥', perUsd: 7.12 }
+    expect(formatCost(1.612, cny)).toBe('¥11.477')
+    expect(formatCost(0.38, cny)).toBe('¥2.706')
+    // A converted amount must not read at a different precision than its neighbour.
+    expect(formatCost(2.5, cny)).toBe('¥17.8')
+    expect(formatCost(1, { symbol: 'HK$', perUsd: 7.8 })).toBe('HK$7.8')
+  })
+})
+
+describe('parseCurrency', () => {
+  test('takes a rate and derives the symbol from the code', () => {
+    expect(parseCurrency({ code: 'CNY', perUsd: 7.12 })).toEqual({ symbol: '¥', perUsd: 7.12 })
+    expect(parseCurrency({ code: 'cny', perUsd: 7.12 })).toEqual({ symbol: '¥', perUsd: 7.12 })
+  })
+
+  test('lets a symbol override the table, and falls back to the code when the table has none', () => {
+    expect(parseCurrency({ code: 'XOF', symbol: 'F ', perUsd: 600 })).toEqual({
+      symbol: 'F ',
+      perUsd: 600,
+    })
+    expect(parseCurrency({ code: 'XOF', perUsd: 600 })).toEqual({ symbol: 'XOF', perUsd: 600 })
+  })
+
+  test('refuses a rate that is not a positive finite number', () => {
+    // A confidently wrong amount is worse than the unconverted one the caller falls back to.
+    expect(parseCurrency({ code: 'CNY' })).toBeNull()
+    expect(parseCurrency({ code: 'CNY', perUsd: 0 })).toBeNull()
+    expect(parseCurrency({ code: 'CNY', perUsd: -7 })).toBeNull()
+    expect(parseCurrency({ code: 'CNY', perUsd: Number.POSITIVE_INFINITY })).toBeNull()
+    expect(parseCurrency({ code: 'CNY', perUsd: '7.12' })).toBeNull()
+    expect(parseCurrency({ perUsd: 7.12 })).toBeNull()
+    expect(parseCurrency(null)).toBeNull()
+    expect(parseCurrency('CNY')).toBeNull()
+  })
+})
+
+describe('currencyFromConfig', () => {
+  test('an absent file is the normal case and means USD', () => {
+    expect(currencyFromConfig(null)).toEqual({ currency: USD, problem: null })
+  })
+
+  test('a file with no currency block is not a problem to report', () => {
+    expect(currencyFromConfig('{}')).toEqual({ currency: USD, problem: null })
+    expect(currencyFromConfig('{"theme":"dark"}')).toEqual({ currency: USD, problem: null })
+  })
+
+  test('reads the configured currency', () => {
+    expect(currencyFromConfig('{"currency":{"code":"CNY","perUsd":7.12}}')).toEqual({
+      currency: { symbol: '¥', perUsd: 7.12 },
+      problem: null,
+    })
+  })
+
+  test('reports a file that exists but cannot be used', () => {
+    // Falling back silently would leave the footer showing dollars with nothing to explain why.
+    expect(currencyFromConfig('{ not json').problem).toContain('not valid JSON')
+    expect(currencyFromConfig('{"currency":{"code":"CNY"}}').problem).toContain('perUsd')
+    expect(currencyFromConfig('{"currency":null}').problem).toContain('perUsd')
+    expect(currencyFromConfig('{ not json').currency).toEqual(USD)
   })
 })
 
@@ -142,6 +210,89 @@ describe('row', () => {
     // the property that matters for a footer is that it never exceeds the terminal.
     expect(visibleWidth(truncated)).toBeLessThanOrEqual(5)
     expect(truncated).toContain('…')
+  })
+})
+
+describe('contextRow', () => {
+  const parts = {
+    percent: 17.5,
+    tokens: 175000,
+    window: 1000000,
+    input: 194000,
+    output: 89000,
+    cacheHitRate: 99.8,
+    cost: 1.612,
+  }
+
+  test('shows context pressure, the session volumes, the hit rate and the bill', () => {
+    const line = contextRow(plain, 200, parts)
+    expect(line).toContain('Context')
+    expect(line).toContain('17.5%')
+    expect(line).toContain('175k / 1.0M')
+    expect(line).toContain('Input 194k')
+    expect(line).toContain('Output 89k')
+    expect(line).toContain('Cache hit 99.8%')
+    expect(line).toContain('Cost $1.612')
+  })
+
+  test('renders the bill in the configured currency', () => {
+    expect(contextRow(plain, 200, parts, { symbol: '¥', perUsd: 7.12 })).toContain('Cost ¥11.477')
+  })
+
+  test('never exceeds the terminal width, at any width', () => {
+    for (const width of [40, 60, 70, 80, 95, 110, 120, 150, 200]) {
+      expect(visibleWidth(contextRow(plain, width, parts))).toBeLessThanOrEqual(width)
+    }
+  })
+
+  test('gives up the tokens/window detail first', () => {
+    // Measured: the full row needs about 115 columns. Below that the detail goes and the
+    // volumes stay, so a narrower terminal does not lose the figures this row exists for.
+    const line = contextRow(plain, 110, parts)
+    expect(line).not.toContain('175k / 1.0M')
+    expect(line).toContain('Input 194k')
+    expect(line).toContain('Output 89k')
+    expect(line).toContain('Cost $1.612')
+  })
+
+  test('drops the volumes before it drops the bill', () => {
+    const line = contextRow(plain, 90, parts)
+    expect(line).not.toContain('Input')
+    expect(line).not.toContain('Output')
+    expect(line).toContain('Cache hit 99.8%')
+    expect(line).toContain('Cost $1.612')
+  })
+
+  test('keeps the meter alone when nothing else fits', () => {
+    const line = contextRow(plain, 60, parts)
+    expect(line).toContain('Context')
+    expect(line).toContain('17.5%')
+    expect(line).not.toContain('Cost')
+    expect(line).not.toContain('Cache hit')
+  })
+
+  test('reports an unknown window instead of inventing one', () => {
+    const line = contextRow(plain, 200, { ...parts, percent: null, window: 0 })
+    expect(line).toContain('?')
+    expect(line).not.toContain('175k /')
+    // The totals do not depend on the context reading, so they still render.
+    expect(line).toContain('Cost $1.612')
+  })
+
+  test('omits a group it has no numbers for', () => {
+    const line = contextRow(plain, 200, {
+      percent: 0,
+      tokens: 0,
+      window: 1000000,
+      input: 0,
+      output: 0,
+      cacheHitRate: null,
+      cost: 0,
+    })
+    expect(line).toContain('Context')
+    expect(line).not.toContain('Input')
+    expect(line).not.toContain('Cache hit')
+    expect(line).not.toContain('Cost')
   })
 })
 

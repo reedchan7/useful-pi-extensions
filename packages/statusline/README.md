@@ -8,18 +8,24 @@ Replaces pi's footer with a labelled two-row one. Every value carries a word, so
 decoded from a symbol or remembered from a legend.
 
 ```
-Context  █████████▍░░░░░░░░░░  47.1%   471k / 1.0M          Cache 38M · Hit 100.0% · Cost $0.56
-~/.pi (master)              deepseek-flash · Effort high · TTFT 482ms · 729 tok/s
+Context  █████████▍░░░░░░░░░░  47.1%   471k / 1.0M                   Input 194k  ·  Output 89k  ·  Cache hit 99.9%  ·  Cost $0.229
+~/.pi (master)                                                               deepseek-flash · Effort high · TTFT 482ms · 729 tok/s
 LSP Active: typescript
 ```
+
+A narrower terminal gives the row up in a fixed order rather than all at once: the `471k / 1.0M`
+detail goes first, then the input/output volumes, leaving the hit rate and the bill. Below about 60
+columns only the meter is left. Every step is a whole value — a number is never shown cut in half.
 
 ## What each part is
 
 | Part                        | Meaning                                                                                                                                                                                      |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Context` + meter + `47.1%` | Share of the model's context window in use. The fill turns `warning` above 70% and `error` above 90%, the same thresholds pi's shipped footer uses, and the percentage changes color with it |
-| `471k / 1.0M`               | Absolute context tokens over the window size. Dropped first when the terminal is narrow                                                                                                      |
-| `Cache` / `Hit` / `Cost`    | Cumulative prompt-cache reads, the latest turn's cache hit rate (`cacheRead / (input + cacheRead + cacheWrite)`), and session cost                                                           |
+| `471k / 1.0M`               | Absolute context tokens over the window size. The first thing dropped when the terminal is narrow                                                                                            |
+| `Input` / `Output`          | Session prompt and completion tokens. `Input` counts the prompt tokens that were neither read from nor written to cache, because pi reports those two separately in the same `usage` object  |
+| `Cache hit`                 | The latest turn's cache hit rate, `cacheRead / (input + cacheRead + cacheWrite)`                                                                                                             |
+| `Cost`                      | Session cost, in USD unless a config file names another currency (see below)                                                                                                                 |
 | Effort                      | The active thinking level                                                                                                                                                                    |
 | `TTFT`                      | Time from request dispatch to the first streamed token                                                                                                                                       |
 | `tok/s`                     | Decode throughput, i.e. output tokens per second of decode time                                                                                                                              |
@@ -43,6 +49,33 @@ Configuration lives at the top of [`render.ts`](render.ts):
 | `BAR_FILL`     | `█`     | Fill glyph                                                                        |
 | `BAR_TRACK`    | `░`     | Set to `""` for a trackless meter, or `"─"` for a hairline one                    |
 | `QUIET_STATUS` | pi-lens | `[statusKey, pattern]` pairs whose matching text is hidden as "nothing to report" |
+
+## Currency
+
+pi prices every model in USD and its `cost` field carries no unit at all, so the footer cannot know
+what you were actually billed. What a session cost in RMB is set by whoever sold you the credit, not
+by a market feed, which is why the rate is configured rather than fetched.
+
+Create `~/.pi/agent/statusline.json`:
+
+```json
+{
+  "currency": {
+    "code": "CNY",
+    "perUsd": 7.12
+  }
+}
+```
+
+- `code` picks the symbol (`CNY` and `RMB` give `¥`; the table also knows `USD`, `EUR`, `GBP`, `JPY`,
+  `HKD`, `TWD`, `SGD`, `KRW` and `INR`). A code the table does not know is printed as it is.
+- `symbol` overrides the table, for a currency it does not list or a different separator.
+- `perUsd` is how many units of that currency one dollar buys — the rate you were actually charged.
+  It has to be a positive number; anything else is refused and the footer stays in USD.
+
+With the file above, the same session reads `Cost ¥1.63` instead of `Cost $0.229`. The file is read
+once per session, so edit it and `/reload`. A file that is there but unusable says so in a
+notification, rather than silently showing dollars with nothing to explain why.
 
 ## Metrics
 

@@ -5,8 +5,8 @@
  *
  * Design notes:
  *
- * - Every value carries a word ("Context", "Cache", "Cost", "Effort"), not a symbol: icon-only labels
- *   are unreadable at a glance.
+ * - Every value carries a word ("Context", "Input", "Output", "Cache hit", "Cost", "Effort"), not a
+ *   symbol: icon-only labels are unreadable at a glance.
  * - Keys render dim and values render brighter, so a key/value pair reads as one unit instead of as a
  *   run of equal-weight tokens.
  * - The meter is a FIXED 20 cells and never stretches to the terminal, so it reads as an instrument
@@ -18,6 +18,9 @@
  * stepStartTime; decodeMs = completedTime - firstTokenTime; tok/s = usage.output / (decodeMs / 1000)
  */
 
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -26,18 +29,17 @@ import type {
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 
 import {
-  bar,
-  BAR_CELLS,
-  formatCost,
+  contextRow,
+  currencyFromConfig,
   formatCwd,
   formatLatency,
-  formatTokens,
   formatTps,
   isQuietStatus,
   pair,
-  percentColor,
   row,
   shortenPath,
+  USD,
+  type Currency,
 } from './render.ts'
 
 const LIVE_RENDER_MS = 200
@@ -45,6 +47,23 @@ const WINDOW_MS = 2000
 const MIN_SAMPLE_MS = 200
 /** Pi's own estimateTokens() heuristic, used only until a real ratio is known. */
 const FALLBACK_TOKENS_PER_CHAR = 0.25
+
+/** The status line's own settings file, alongside pi's other per-tool config. */
+const CONFIG_PATH = join(homedir(), '.pi', 'agent', 'statusline.json')
+
+/**
+ * Reads the display currency.
+ *
+ * Called once per session on purpose: a footer that stat'ed a file on every frame would be its own
+ * bug. Editing the file therefore takes effect on `/reload`.
+ */
+async function loadCurrency(notify: (message: string) => void): Promise<Currency> {
+  const file = Bun.file(CONFIG_PATH)
+  const text = (await file.exists()) ? await file.text() : null
+  const { currency, problem } = currencyFromConfig(text)
+  if (problem !== null) notify(problem)
+  return currency
+}
 
 /** A content block as providers stream it; every field is read defensively. */
 type ContentBlock = {
@@ -148,6 +167,7 @@ function seedRatio(ctx: ExtensionContext): number | null {
 export default function (pi: ExtensionAPI) {
   let ratio: number | null = null
   let requestRender: (() => void) | null = null
+  let currency: Currency = USD
 
   // Latest turn reading: { rate, exact, ttftMs }
   let reading: { rate: number; exact: boolean; ttftMs: number | null } | null = null
@@ -184,31 +204,20 @@ export default function (pi: ExtensionAPI) {
         render(width: number): string[] {
           const usage = ctx.getContextUsage()
           const totals = collectTotals(ctx)
-          const percent = usage?.percent ?? null
-          const fraction = percent === null ? 0 : percent / 100
-
-          // Row 1 right: cache and cost, words instead of symbols.
-          const row1Parts: string[] = []
-          if (totals.cacheRead > 0)
-            row1Parts.push(pair(theme, 'Cache', formatTokens(totals.cacheRead)))
-          if (totals.cacheHitRate !== null) {
-            row1Parts.push(pair(theme, 'Hit', `${totals.cacheHitRate.toFixed(1)}%`))
-          }
-          if (totals.cost > 0) row1Parts.push(pair(theme, 'Cost', formatCost(totals.cost)))
-          const row1Right = row1Parts.join(theme.fg('dim', '  ·  '))
-
-          // Row 1 left: fixed-size meter, percentage as the hero, absolute figures
-          // as quiet secondary detail. Air to the right of the meter is deliberate.
-          const pctColor = percentColor(percent)
-          const pctText = theme.fg(pctColor, percent === null ? '?' : `${percent.toFixed(1)}%`)
-          const window = usage?.contextWindow ?? ctx.model?.contextWindow ?? 0
-          const detail =
-            window > 0 ? `${formatTokens(usage?.tokens ?? 0)} / ${formatTokens(window)}` : ''
-          const meter = `${theme.fg('dim', 'Context')}  ${bar(theme, BAR_CELLS, fraction)}  ${pctText}`
-          const withDetail = detail ? `${meter}   ${theme.fg('dim', detail)}` : meter
-          // Shed the secondary detail before the cache/cost group gets squeezed.
-          const row1Left =
-            visibleWidth(withDetail) + 2 + visibleWidth(row1Right) <= width ? withDetail : meter
+          const row1 = contextRow(
+            theme,
+            width,
+            {
+              percent: usage?.percent ?? null,
+              tokens: usage?.tokens ?? 0,
+              window: usage?.contextWindow ?? ctx.model?.contextWindow ?? 0,
+              input: totals.input,
+              output: totals.output,
+              cacheHitRate: totals.cacheHitRate,
+              cost: totals.cost,
+            },
+            currency,
+          )
 
           // Row 2: model and the latest turn's timing on the right, path on the left.
           const model = ctx.model?.id ?? 'no model'
@@ -245,10 +254,7 @@ export default function (pi: ExtensionAPI) {
           }
           const row2Left = pwdPlain ? theme.fg('muted', pwdPlain) : ''
 
-          const lines = [
-            row(theme, width, row1Left, row1Right),
-            row(theme, width, row2Left, row2Right),
-          ]
+          const lines = [row1, row(theme, width, row2Left, row2Right)]
 
           // Other extensions' status entries still belong on screen, minus the
           // ones that only report that nothing is happening.
@@ -269,6 +275,7 @@ export default function (pi: ExtensionAPI) {
     ratio = seedRatio(ctx)
     reading = null
     resetStream()
+    currency = await loadCurrency((message) => ctx.ui.notify(message, 'warning'))
     installFooter(ctx)
   })
 

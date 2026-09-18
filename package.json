@@ -1,6 +1,6 @@
 {
   "name": "useful-pi-extensions",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A small collection of pi extensions, installed with one command — a labelled status line with context pressure, cache, cost, effort, TTFT and tokens/sec.",
   "keywords": [
     "bun",
@@ -19,6 +19,7 @@
     "url": "https://github.com/reedchan7/useful-pi-extensions/issues"
   },
   "license": "MIT",
+  "author": "Reed Chan <xinyuchen77@gmail.com>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/reedchan7/useful-pi-extensions.git"
