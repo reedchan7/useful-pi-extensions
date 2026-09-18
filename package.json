@@ -63,6 +63,7 @@
   "pi": {
     "extensions": [
       "./extensions"
-    ]
+    ],
+    "image": "https://github.com/user-attachments/assets/7ae64213-cb05-4440-835e-a633796a87f9"
   }
 }
