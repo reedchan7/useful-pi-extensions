@@ -81,6 +81,36 @@ export function ttftMs(requestAt: number | null, firstTokenAt: number | null): n
   return firstTokenAt > requestAt ? firstTokenAt - requestAt : null
 }
 
+/** What the TTFT slot renders, and whether the clock is still running. */
+export interface TtftDisplay {
+  text: string
+  live: boolean
+}
+
+/**
+ * The TTFT slot, for all three phases of a request.
+ *
+ * While the request is in flight the slot counts up (`~2s`, the `~` marking an unfinished wait, the
+ * same convention as the tok/s estimate) — a slow first byte is something you watch happen, not a
+ * number you are told about afterwards. The moment the first token lands the count freezes into the
+ * exact value. With no request in flight there is nothing to show.
+ *
+ * @param now - The clock, passed in so every branch stays a function of its arguments.
+ */
+export function ttftDisplay(
+  requestAt: number | null,
+  firstTokenAt: number | null,
+  now: number,
+): TtftDisplay | null {
+  if (requestAt === null) return null
+  if (firstTokenAt === null) {
+    if (now < requestAt) return null
+    return { text: `~${formatLatency(now - requestAt)}`, live: true }
+  }
+  const measured = ttftMs(requestAt, firstTokenAt)
+  return measured === null ? null : { text: formatLatency(measured), live: false }
+}
+
 /** Home-relative path, or the absolute path when it is outside the home directory. */
 export function formatCwd(cwd: string): string {
   const home = homedir()

@@ -13,11 +13,13 @@ SHELL := /bin/bash
 # Git remote users install from; matches the `pi install` spec below.
 REMOTE ?= github.com/reedchan7/useful-pi-extensions
 # Tag pinned by `make install-github`.
-TAG ?= v1.0.0
+TAG ?= v1.1.2
 # Restrict a publish to one package, by its npm name: PKG=@reedchan/statusline
 PKG ?=
 # DRY=1 walks the whole publish path and publishes nothing.
 DRY ?=
+# The extension as pi refers to it on this machine: see install-npm / update-npm / remove-npm.
+PI_PKG ?= npm:@reedchan/statusline
 
 ##
 ## Help
@@ -26,7 +28,7 @@ DRY ?=
 .PHONY: help
 help: ## Show this help
 	@printf 'useful-pi-extensions\n\n'
-	@printf 'Usage: make <target> [TAG=%s] [PKG=%s] [DRY=%s]\n' '$(TAG)' '$(PKG)' '$(DRY)'
+	@printf 'Usage: make <target> [TAG=%s] [PKG=%s] [DRY=%s] [PI_PKG=%s]\n' '$(TAG)' '$(PKG)' '$(DRY)' '$(PI_PKG)'
 	@awk ' \
 		/^## [A-Za-z]/ { sub(/^## /, ""); printf "\n\033[1m%s\033[0m\n", $$0; next } \
 		/^[a-zA-Z0-9_-]+:.*## / { \
@@ -101,13 +103,25 @@ publish: ## Publish the packages whose version is not on npm yet
 ##
 
 .PHONY: install-local
-install-local: ## Install this checkout into pi
+install-local: ## Install this checkout's collection into pi (live tree; /reload to apply)
 	pi install $(CURDIR)
+
+.PHONY: install-npm
+install-npm: ## Install the published extension into pi
+	pi install $(PI_PKG)
+
+.PHONY: update-npm
+update-npm: ## Update the installed extension to the latest published release
+	pi update $(PI_PKG)
+
+.PHONY: remove-npm
+remove-npm: ## Remove the installed extension from pi
+	pi remove $(PI_PKG)
 
 .PHONY: install-github
 install-github: ## Install the pinned git ref into pi
 	pi install git:$(REMOTE)@$(TAG)
 
 .PHONY: uninstall
-uninstall: ## Remove this checkout from pi
+uninstall: ## Remove this checkout's collection from pi
 	pi remove $(CURDIR)

@@ -26,6 +26,7 @@ import {
   percentColor,
   row,
   shortenPath,
+  ttftDisplay,
   ttftMs,
   USD,
 } from './render.ts'
@@ -160,6 +161,29 @@ describe('ttftMs', () => {
     // The reading the user saw as `TTFT 0ms`: a first token that appeared to precede its request.
     expect(ttftMs(1482, 1000)).toBeNull()
     expect(ttftMs(1482, 1482)).toBeNull()
+  })
+})
+
+describe('ttftDisplay', () => {
+  test('counts up while the request is in flight, marked as unfinished', () => {
+    expect(ttftDisplay(1000, null, 1000)).toEqual({ text: '~0ms', live: true })
+    expect(ttftDisplay(1000, null, 1000 + 482)).toEqual({ text: '~482ms', live: true })
+    expect(ttftDisplay(1000, null, 1000 + 29_000)).toEqual({ text: '~29s', live: true })
+  })
+
+  test('freezes into the exact value the moment the first token lands', () => {
+    expect(ttftDisplay(1000, 1482, 5000)).toEqual({ text: '482ms', live: false })
+    // `now` keeps moving; a landed first token no longer ticks.
+    expect(ttftDisplay(1000, 1482, 90_000)).toEqual({ text: '482ms', live: false })
+  })
+
+  test('shows nothing without a request in flight', () => {
+    expect(ttftDisplay(null, null, 5000)).toBeNull()
+    expect(ttftDisplay(null, 1482, 5000)).toBeNull()
+  })
+
+  test('shows nothing when the anchors invert, rather than a clamped fake', () => {
+    expect(ttftDisplay(1482, 1000, 5000)).toBeNull()
   })
 })
 

@@ -39,6 +39,7 @@ import {
   pair,
   row,
   shortenPath,
+  ttftDisplay,
   ttftMs,
   USD,
   type Currency,
@@ -47,6 +48,8 @@ import {
 const LIVE_RENDER_MS = 200
 const WINDOW_MS = 2000
 const MIN_SAMPLE_MS = 200
+/** How often the waiting TTFT slot ticks while a request is in flight. */
+const TICK_MS = 250
 /** Pi's own estimateTokens() heuristic, used only until a real ratio is known. */
 const FALLBACK_TOKENS_PER_CHAR = 0.25
 
@@ -188,6 +191,7 @@ export default function (pi: ExtensionAPI) {
   let chars = 0
   let requestAt: number | null = null
   let firstTokenAt: number | null = null
+  let ticker: ReturnType<typeof setInterval> | null = null
   let windowAt = 0
   let windowTokens = 0
   let renderedAt = 0
@@ -203,6 +207,26 @@ export default function (pi: ExtensionAPI) {
   function publish(rate: number, exact: boolean, ttft: number | null): void {
     reading = { rate, exact, ttftMs: ttft }
     requestRender?.()
+  }
+
+  /** Stops the live count; a frozen TTFT needs no clock. */
+  function stopTicker(): void {
+    if (ticker !== null) {
+      clearInterval(ticker)
+      ticker = null
+    }
+  }
+
+  /** Ticks the footer while a request is in flight, until the first token lands or the turn ends. */
+  function startTicker(): void {
+    if (ticker !== null) return
+    ticker = setInterval(() => {
+      if (requestAt === null || firstTokenAt !== null) {
+        stopTicker()
+        return
+      }
+      requestRender?.()
+    }, TICK_MS)
   }
 
   function installFooter(ctx: ExtensionContext): void {
@@ -236,7 +260,12 @@ export default function (pi: ExtensionAPI) {
           const model = ctx.model?.id ?? 'no model'
           const row2Parts = [theme.fg('accent', model)]
           if (ctx.thinkingLevel) row2Parts.push(pair(theme, 'Effort', ctx.thinkingLevel, 'muted'))
-          if (reading) {
+          const waiting = ttftDisplay(requestAt, firstTokenAt, Date.now())
+          if (waiting !== null) {
+            // The clock is running: this wait has no reading yet, so the previous turn's
+            // throughput would only be mistaken for the current one.
+            row2Parts.push(pair(theme, 'TTFT', waiting.text, 'muted'))
+          } else if (reading) {
             if (reading.ttftMs !== null)
               row2Parts.push(pair(theme, 'TTFT', formatLatency(reading.ttftMs), 'muted'))
             row2Parts.push(
@@ -284,10 +313,28 @@ export default function (pi: ExtensionAPI) {
     })
   }
 
+  // A run that ends without a first token (abort, provider error) must not leave a clock counting
+  // against a request that is no longer in flight.
+  pi.on('turn_end', async () => {
+    requestAt = null
+    stopTicker()
+  })
+
+  pi.on('agent_end', async () => {
+    requestAt = null
+    stopTicker()
+  })
+
+  pi.on('agent_settled', async () => {
+    requestAt = null
+    stopTicker()
+  })
+
   pi.on('session_start', async (_event, ctx) => {
     ratio = seedRatio(ctx)
     reading = null
     requestAt = null
+    stopTicker()
     resetStream()
     currency = await loadCurrency((message) => ctx.ui.notify(message, 'warning'))
     installFooter(ctx)
@@ -309,6 +356,16 @@ export default function (pi: ExtensionAPI) {
     requestAt = Date.now()
   })
 
+  pi.on('turn_start', async () => {
+    requestAt = null
+    stopTicker()
+  })
+
+  pi.on('before_provider_request', async () => {
+    requestAt = Date.now()
+    startTicker()
+  })
+
   pi.on('message_update', async (event) => {
     const delta = event.assistantMessageEvent
     // Narrowing on the discriminant is what keeps the payload typed; membership in
@@ -322,7 +379,10 @@ export default function (pi: ExtensionAPI) {
     }
 
     const now = Date.now()
-    if (firstTokenAt === null) firstTokenAt = now
+    if (firstTokenAt === null) {
+      firstTokenAt = now
+      stopTicker()
+    }
     chars += delta.delta.length
 
     const tokens = chars * (ratio ?? FALLBACK_TOKENS_PER_CHAR)
@@ -357,6 +417,9 @@ export default function (pi: ExtensionAPI) {
     const tokens = output > 0 ? output : totalChars * (ratio ?? FALLBACK_TOKENS_PER_CHAR)
     if (measured !== null && decodeMs >= MIN_SAMPLE_MS)
       publish((tokens / decodeMs) * 1000, output > 0, measured)
+    // Null it with the stream: a request that has produced its message is no longer in flight, and
+    // a stale anchor would let the live branch count against nothing until the next turn.
+    requestAt = null
     resetStream()
   })
 }
