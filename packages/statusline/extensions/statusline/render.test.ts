@@ -26,6 +26,7 @@ import {
   percentColor,
   row,
   shortenPath,
+  ttftMs,
   USD,
 } from './render.ts'
 
@@ -142,6 +143,23 @@ describe('currencyFromConfig', () => {
     expect(currencyFromConfig('{"currency":{"code":"CNY"}}').problem).toContain('perUsd')
     expect(currencyFromConfig('{"currency":null}').problem).toContain('perUsd')
     expect(currencyFromConfig('{ not json').currency).toEqual(USD)
+  })
+})
+
+describe('ttftMs', () => {
+  test('measures from the dispatched request to the first streamed token', () => {
+    expect(ttftMs(1000, 1482)).toBe(482)
+  })
+
+  test('is null, not a fabricated 0, when an anchor is missing', () => {
+    expect(ttftMs(null, 1482)).toBeNull()
+    expect(ttftMs(1000, null)).toBeNull()
+  })
+
+  test('is null when the anchors invert, because formatLatency would clamp that to a fake 0ms', () => {
+    // The reading the user saw as `TTFT 0ms`: a first token that appeared to precede its request.
+    expect(ttftMs(1482, 1000)).toBeNull()
+    expect(ttftMs(1482, 1482)).toBeNull()
   })
 })
 

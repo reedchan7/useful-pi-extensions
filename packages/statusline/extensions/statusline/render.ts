@@ -66,6 +66,21 @@ export function formatLatency(ms: number): string {
   return `${seconds < 10 ? Math.round(seconds * 10) / 10 : Math.round(seconds)}s`
 }
 
+/**
+ * TTFT from its two wall-clock anchors: the moment the request was dispatched, and the first
+ * streamed delta.
+ *
+ * The guard is the point. Both anchors come from extension events whose ordering around a stream is
+ * not guaranteed, and a first token that appears to precede its own request yields a negative that
+ * `formatLatency` would clamp to `0ms` — a confident fake where an honest absence belongs.
+ *
+ * @returns The milliseconds between the two, or null when they do not line up.
+ */
+export function ttftMs(requestAt: number | null, firstTokenAt: number | null): number | null {
+  if (requestAt === null || firstTokenAt === null) return null
+  return firstTokenAt > requestAt ? firstTokenAt - requestAt : null
+}
+
 /** Home-relative path, or the absolute path when it is outside the home directory. */
 export function formatCwd(cwd: string): string {
   const home = homedir()

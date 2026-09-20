@@ -39,6 +39,7 @@ import {
   pair,
   row,
   shortenPath,
+  ttftMs,
   USD,
   type Currency,
 } from './render.ts'
@@ -185,7 +186,7 @@ export default function (pi: ExtensionAPI) {
   let reading: { rate: number; exact: boolean; ttftMs: number | null } | null = null
 
   let chars = 0
-  let stepStartedAt = 0
+  let requestAt: number | null = null
   let firstTokenAt: number | null = null
   let windowAt = 0
   let windowTokens = 0
@@ -199,8 +200,8 @@ export default function (pi: ExtensionAPI) {
     renderedAt = 0
   }
 
-  function publish(rate: number, exact: boolean, ttftMs: number | null): void {
-    reading = { rate, exact, ttftMs }
+  function publish(rate: number, exact: boolean, ttft: number | null): void {
+    reading = { rate, exact, ttftMs: ttft }
     requestRender?.()
   }
 
@@ -286,6 +287,7 @@ export default function (pi: ExtensionAPI) {
   pi.on('session_start', async (_event, ctx) => {
     ratio = seedRatio(ctx)
     reading = null
+    requestAt = null
     resetStream()
     currency = await loadCurrency((message) => ctx.ui.notify(message, 'warning'))
     installFooter(ctx)
@@ -294,7 +296,17 @@ export default function (pi: ExtensionAPI) {
   pi.on('message_start', async (event) => {
     if (event.message.role !== 'assistant') return
     resetStream()
-    stepStartedAt = Date.now()
+  })
+
+  // TTFT's request anchor, from the agent loop in pi's docs: turn_start opens the LLM call and
+  // before_provider_request is the last thing pi does before the wire. message_start is not that
+  // moment, and anchoring there made a first token that arrived early read as a clamped 0ms.
+  pi.on('turn_start', async () => {
+    requestAt = null
+  })
+
+  pi.on('before_provider_request', async () => {
+    requestAt = Date.now()
   })
 
   pi.on('message_update', async (event) => {
@@ -326,7 +338,7 @@ export default function (pi: ExtensionAPI) {
     const rate =
       windowMs > 0 ? ((tokens - windowTokens) / windowMs) * 1000 : (tokens / decodeMs) * 1000
     renderedAt = now
-    publish(rate, false, firstTokenAt - stepStartedAt)
+    publish(rate, false, ttftMs(requestAt, firstTokenAt))
   })
 
   pi.on('message_end', async (event) => {
@@ -341,10 +353,10 @@ export default function (pi: ExtensionAPI) {
     }
 
     const decodeMs = firstTokenAt !== null ? Date.now() - firstTokenAt : 0
-    const ttftMs = firstTokenAt !== null ? firstTokenAt - stepStartedAt : null
+    const measured = ttftMs(requestAt, firstTokenAt)
     const tokens = output > 0 ? output : totalChars * (ratio ?? FALLBACK_TOKENS_PER_CHAR)
-    if (ttftMs !== null && decodeMs >= MIN_SAMPLE_MS)
-      publish((tokens / decodeMs) * 1000, output > 0, ttftMs)
+    if (measured !== null && decodeMs >= MIN_SAMPLE_MS)
+      publish((tokens / decodeMs) * 1000, output > 0, measured)
     resetStream()
   })
 }
