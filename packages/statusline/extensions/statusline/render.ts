@@ -250,26 +250,34 @@ export function currencyFromConfig(text: string | null): CurrencyConfig {
   }
 }
 
-/** One rate out of an open.er-api.com payload (`{"rates": {"CNY": 7.12}}`), read defensively. */
-export function rateFromPayload(payload: unknown, code: string): number | null {
-  if (!isRecord(payload) || !isRecord(payload.rates)) return null
-  const rate = payload.rates[code]
-  return typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : null
+/** The day's rates out of an open.er-api.com payload, positive and finite only. */
+export function ratesFromPayload(payload: unknown): Record<string, number> {
+  if (!isRecord(payload) || !isRecord(payload.rates)) return {}
+  const rates: Record<string, number> = {}
+  for (const [code, rate] of Object.entries(payload.rates)) {
+    if (typeof rate === 'number' && Number.isFinite(rate) && rate > 0) rates[code] = rate
+  }
+  return rates
 }
 
-/** The rate a config file cached from an earlier fetch, and the day it was fetched. */
-export function cachedRate(text: string): { perUsd: number; fetchedAt: string } | null {
+/** The rates a config file cached from an earlier fetch, and the day they were fetched. */
+export function cachedRates(
+  text: string,
+): { rates: Record<string, number>; fetchedAt: string } | null {
   let config: unknown
   try {
     config = JSON.parse(text)
   } catch {
     return null
   }
-  if (!isRecord(config)) return null
-  const perUsd = config.fetchedPerUsd
+  if (!isRecord(config) || !isRecord(config.rates)) return null
   const fetchedAt = config.fetchedAt
-  if (typeof perUsd !== 'number' || !Number.isFinite(perUsd) || perUsd <= 0) return null
-  return typeof fetchedAt === 'string' ? { perUsd, fetchedAt } : null
+  if (typeof fetchedAt !== 'string') return null
+  const rates: Record<string, number> = {}
+  for (const [code, rate] of Object.entries(config.rates)) {
+    if (typeof rate === 'number' && Number.isFinite(rate) && rate > 0) rates[code] = rate
+  }
+  return Object.keys(rates).length === 0 ? null : { rates, fetchedAt }
 }
 
 /** Whether a cached rate was fetched today, both dates as `YYYY-MM-DD`. */
@@ -277,13 +285,23 @@ export function cacheIsFresh(fetchedAt: string, today: string): boolean {
   return fetchedAt.slice(0, 10) === today
 }
 
+/** Session-average output tokens per second of measured decode time; null before any measurement. */
+export function avgTokPerSec(outputTokens: number, decodeMs: number): number | null {
+  if (decodeMs <= 0) return null
+  return outputTokens / (decodeMs / 1000)
+}
+
 /**
- * The config file's text with a fetched rate recorded in it, so the next session starts warm.
+ * The config file's text with the day's rates recorded in it, so the next session starts warm.
  *
  * Unknown keys are kept, and a file that does not parse is returned untouched: the extension has no
  * business replacing a config it could not read with one it wrote.
  */
-export function withCachedRate(text: string, perUsd: number, fetchedAt: string): string {
+export function withCachedRates(
+  text: string,
+  rates: Record<string, number>,
+  fetchedAt: string,
+): string {
   let config: unknown
   try {
     config = JSON.parse(text)
@@ -291,7 +309,7 @@ export function withCachedRate(text: string, perUsd: number, fetchedAt: string):
     return text
   }
   if (!isRecord(config)) return text
-  return `${JSON.stringify({ ...config, fetchedPerUsd: perUsd, fetchedAt }, null, 2)}\n`
+  return `${JSON.stringify({ ...config, rates, fetchedAt }, null, 2)}\n`
 }
 
 /** Three decimals, with one trailing zero trimmed so `$0.380` renders as `$0.38`. */

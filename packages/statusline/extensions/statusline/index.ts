@@ -30,6 +30,7 @@ import type {
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 
 import {
+  avgTokPerSec,
   contextRow,
   currencyFromConfig,
   formatCwd,
@@ -37,10 +38,10 @@ import {
   formatTps,
   isQuietStatus,
   pair,
-  rateFromPayload,
-  cachedRate,
+  cachedRates,
+  ratesFromPayload,
   cacheIsFresh,
-  withCachedRate,
+  withCachedRates,
   row,
   shortenPath,
   ttftDisplay,
@@ -59,7 +60,7 @@ const FALLBACK_TOKENS_PER_CHAR = 0.25
 
 /** The status line's own settings file, alongside pi's other per-tool config. */
 const CONFIG_PATH = join(homedir(), '.pi', 'agent', 'statusline.json')
-/** Free, keyless, updated once a day — which is exactly the freshness a daily rate wants. */
+/** Free, keyless, and one request returns every currency — so the cache serves instant switching. */
 const RATES_URL = 'https://open.er-api.com/v6/latest/USD'
 const FETCH_TIMEOUT_MS = 5000
 
@@ -70,13 +71,14 @@ function today(): string {
   return `${now.getFullYear()}-${month}-${day}`
 }
 
-async function fetchRate(code: string): Promise<number | null> {
+async function fetchRates(): Promise<Record<string, number> | null> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
   try {
     const response = await fetch(RATES_URL, { signal: controller.signal })
     if (!response.ok) return null
-    return rateFromPayload(await response.json(), code)
+    const rates = ratesFromPayload(await response.json())
+    return Object.keys(rates).length === 0 ? null : rates
   } catch {
     return null
   } finally {
@@ -86,6 +88,11 @@ async function fetchRate(code: string): Promise<number | null> {
 
 /**
  * Reads the display currency.
+ *
+ * `perUsd` is a pinned rate and wins untouched; a code without one resolves through the cached rate
+ * table — today's table answers instantly, a stale one answers while a fresh one is fetched, and
+ * only a first-ever failure speaks up. The whole table is cached because one request returns every
+ * currency, which is also what makes switching codes instant and offline.
  *
  * Called once per session on purpose: a footer that stat'ed a file on every frame would be its own
  * bug. Editing the file therefore takes effect on `/reload`.
@@ -102,21 +109,22 @@ async function loadCurrency(notify: (message: string) => void): Promise<Currency
   if (problem !== null) notify(problem)
   if (pending === null) return currency
 
-  const cached = cachedRate(text)
-  if (cached !== null && cacheIsFresh(cached.fetchedAt, today())) {
-    return { symbol: pending.symbol, perUsd: cached.perUsd }
+  const cached = cachedRates(text)
+  const known = cached?.rates[pending.code]
+  if (cached !== null && known !== undefined && cacheIsFresh(cached.fetchedAt, today())) {
+    return { symbol: pending.symbol, perUsd: known }
   }
 
-  const fetched = await fetchRate(pending.code)
+  const fetched = await fetchRates()
   if (fetched !== null) {
     try {
-      await writeFile(CONFIG_PATH, withCachedRate(text, fetched, today()))
+      await writeFile(CONFIG_PATH, withCachedRates(text, fetched, today()))
     } catch {
       // The session still runs on the fetched rate; only tomorrow's warm start is lost.
     }
-    return { symbol: pending.symbol, perUsd: fetched }
+    return { symbol: pending.symbol, perUsd: fetched[pending.code] ?? USD.perUsd }
   }
-  if (cached !== null) return { symbol: pending.symbol, perUsd: cached.perUsd }
+  if (known !== undefined) return { symbol: pending.symbol, perUsd: known }
   notify(`could not fetch a ${pending.code} rate, showing USD`)
   return USD
 }
@@ -231,6 +239,7 @@ export default function (pi: ExtensionAPI) {
   let chars = 0
   let requestAt: number | null = null
   let firstTokenAt: number | null = null
+  let totalDecodeMs = 0
   let ticker: ReturnType<typeof setInterval> | null = null
   let windowAt = 0
   let windowTokens = 0
@@ -281,6 +290,7 @@ export default function (pi: ExtensionAPI) {
         render(width: number): string[] {
           const usage = ctx.getContextUsage()
           const totals = collectTotals(ctx)
+          const avg = avgTokPerSec(totals.output, totalDecodeMs)
           const row1 = contextRow(
             theme,
             width,
@@ -309,12 +319,15 @@ export default function (pi: ExtensionAPI) {
             if (reading.ttftMs !== null)
               row2Parts.push(pair(theme, 'TTFT', formatLatency(reading.ttftMs), 'muted'))
             row2Parts.push(
-              theme.fg(
-                reading.exact ? 'success' : 'dim',
+              pair(
+                theme,
+                'Last',
                 `${reading.exact ? '' : '~'}${formatTps(reading.rate)} tok/s`,
+                reading.exact ? 'success' : 'dim',
               ),
             )
           }
+          if (avg !== null) row2Parts.push(pair(theme, 'Avg', `${formatTps(avg)} tok/s`, 'muted'))
           const row2Right = row2Parts.join(theme.fg('dim', '  ·  '))
 
           const branch = footerData.getGitBranch()
@@ -374,6 +387,7 @@ export default function (pi: ExtensionAPI) {
     ratio = seedRatio(ctx)
     reading = null
     requestAt = null
+    totalDecodeMs = 0
     stopTicker()
     resetStream()
     currency = await loadCurrency((message) => ctx.ui.notify(message, 'warning'))
@@ -455,8 +469,11 @@ export default function (pi: ExtensionAPI) {
     const decodeMs = firstTokenAt !== null ? Date.now() - firstTokenAt : 0
     const measured = ttftMs(requestAt, firstTokenAt)
     const tokens = output > 0 ? output : totalChars * (ratio ?? FALLBACK_TOKENS_PER_CHAR)
-    if (measured !== null && decodeMs >= MIN_SAMPLE_MS)
+    if (measured !== null && decodeMs >= MIN_SAMPLE_MS) {
+      // Session-average numerator lives in collectTotals; this is its denominator.
+      totalDecodeMs += decodeMs
       publish((tokens / decodeMs) * 1000, output > 0, measured)
+    }
     // Null it with the stream: a request that has produced its message is no longer in flight, and
     // a stale anchor would let the live branch count against nothing until the next turn.
     requestAt = null

@@ -26,10 +26,11 @@ import {
   percentColor,
   row,
   shortenPath,
-  rateFromPayload,
-  cachedRate,
+  avgTokPerSec,
+  cachedRates,
+  ratesFromPayload,
   cacheIsFresh,
-  withCachedRate,
+  withCachedRates,
   ttftDisplay,
   ttftMs,
   USD,
@@ -164,22 +165,39 @@ describe('currencyFromConfig', () => {
   })
 })
 
-describe('rateFromPayload', () => {
-  test('reads the requested code out of an open.er-api.com payload', () => {
-    expect(rateFromPayload({ rates: { USD: 1, CNY: 7.12 } }, 'CNY')).toBe(7.12)
-    expect(rateFromPayload({ rates: { USD: 1 } }, 'CNY')).toBeNull()
-    expect(rateFromPayload({ result: 'success' }, 'CNY')).toBeNull()
-    expect(rateFromPayload('nope', 'CNY')).toBeNull()
+describe('ratesFromPayload', () => {
+  test('keeps every positive finite rate and drops the rest', () => {
+    expect(ratesFromPayload({ rates: { USD: 1, CNY: 7.12, JPY: -1, X: 'x' } })).toEqual({
+      USD: 1,
+      CNY: 7.12,
+    })
+    expect(ratesFromPayload({ result: 'success' })).toEqual({})
+    expect(ratesFromPayload('nope')).toEqual({})
   })
 })
 
-describe('cachedRate, cacheIsFresh and withCachedRate', () => {
-  const file = '{"currency":{"code":"CNY"},"fetchedPerUsd":7.14,"fetchedAt":"2026-09-20"}'
+describe('ratesFromPayload', () => {
+  test('keeps every positive finite rate and drops the rest', () => {
+    expect(ratesFromPayload({ rates: { USD: 1, CNY: 7.12, JPY: -1, X: 'x' } })).toEqual({
+      USD: 1,
+      CNY: 7.12,
+    })
+    expect(ratesFromPayload({ result: 'success' })).toEqual({})
+    expect(ratesFromPayload('nope')).toEqual({})
+  })
+})
 
-  test('reads back what a fetch wrote, and ignores a cache that is not a positive number', () => {
-    expect(cachedRate(file)).toEqual({ perUsd: 7.14, fetchedAt: '2026-09-20' })
-    expect(cachedRate('{"fetchedPerUsd":"7.14"}')).toBeNull()
-    expect(cachedRate('{}')).toBeNull()
+describe('cachedRates, cacheIsFresh and withCachedRates', () => {
+  const file =
+    '{"currency":{"code":"CNY"},"rates":{"CNY":7.14,"JPY":155.2},"fetchedAt":"2026-09-20"}'
+
+  test('reads back the whole cached table, and refuses an empty or malformed one', () => {
+    expect(cachedRates(file)).toEqual({
+      rates: { CNY: 7.14, JPY: 155.2 },
+      fetchedAt: '2026-09-20',
+    })
+    expect(cachedRates('{"rates":{"CNY":"7.14"},"fetchedAt":"2026-09-20"}')).toBeNull()
+    expect(cachedRates('{}')).toBeNull()
   })
 
   test('a cache is fresh on the day it was fetched and stale the day after', () => {
@@ -187,14 +205,28 @@ describe('cachedRate, cacheIsFresh and withCachedRate', () => {
     expect(cacheIsFresh('2026-09-20', '2026-09-21')).toBe(false)
   })
 
-  test('writes the fetch back without disturbing the keys it does not own', () => {
-    const updated = withCachedRate(file, 7.15, '2026-09-21')
-    expect(cachedRate(updated)).toEqual({ perUsd: 7.15, fetchedAt: '2026-09-21' })
+  test('writes the table back without disturbing the keys it does not own', () => {
+    const updated = withCachedRates(file, { CNY: 7.15, JPY: 155.4 }, '2026-09-21')
+    expect(cachedRates(updated)).toEqual({
+      rates: { CNY: 7.15, JPY: 155.4 },
+      fetchedAt: '2026-09-21',
+    })
     expect(updated).toContain('"code": "CNY"')
   })
 
   test('never overwrites a file it could not parse', () => {
-    expect(withCachedRate('{ not json', 7.15, '2026-09-21')).toBe('{ not json')
+    expect(withCachedRates('{ not json', { CNY: 7.15 }, '2026-09-21')).toBe('{ not json')
+  })
+})
+
+describe('avgTokPerSec', () => {
+  test('is the session average over measured decode time', () => {
+    expect(avgTokPerSec(5120, 10_000)).toBe(512)
+    expect(avgTokPerSec(370, 1000)).toBe(370)
+  })
+
+  test('is null before any decode time has been measured', () => {
+    expect(avgTokPerSec(5120, 0)).toBeNull()
   })
 })
 
