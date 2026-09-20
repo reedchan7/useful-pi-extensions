@@ -53,29 +53,34 @@ Configuration lives at the top of [`render.ts`](render.ts):
 ## Currency
 
 pi prices every model in USD and its `cost` field carries no unit at all, so the footer cannot know
-what you were actually billed. What a session cost in RMB is set by whoever sold you the credit, not
-by a market feed, which is why the rate is configured rather than fetched.
-
-Create `~/.pi/agent/statusline.json`:
+what you were actually billed. The currency and the rate live in `~/.pi/agent/statusline.json`:
 
 ```json
 {
   "currency": {
-    "code": "CNY",
-    "perUsd": 7.12
+    "code": "CNY"
   }
 }
 ```
 
-- `code` picks the symbol (`CNY` and `RMB` give `¥`; the table also knows `USD`, `EUR`, `GBP`, `JPY`,
-  `HKD`, `TWD`, `SGD`, `KRW` and `INR`). A code the table does not know is printed as it is.
-- `symbol` overrides the table, for a currency it does not list or a different separator.
-- `perUsd` is how many units of that currency one dollar buys — the rate you were actually charged.
-  It has to be a positive number; anything else is refused and the footer stays in USD.
+Two ways to set the rate:
 
-With the file above, the same session reads `Cost ¥1.63` instead of `Cost $0.229`. The file is read
-once per session, so edit it and `/reload`. A file that is there but unusable says so in a
-notification, rather than silently showing dollars with nothing to explain why.
+- **Follow the market.** A `code` with no rate fetches the day's table from open.er-api.com on the
+  first session of each day and caches the whole table in the file (`rates` + `fetchedAt`), so the
+  next session starts warm and switching codes is instant and offline.
+- **Pin it.** Add `"perUsd": 7.12` and the footer always uses that rate, never touching the network
+  — the right choice when your platform bills in RMB directly, because a domestic price list is not
+  the dollar list times a market rate.
+
+`code` picks the symbol: `¥` for `CNY` and `RMB`, `JP¥` for `JPY` so the two never trade places, and
+the table also knows `USD`, `EUR`, `GBP`, `HKD`, `TWD`, `SGD`, `KRW`, `INR`, `AUD`, `CAD`, `NZD` and
+`CHF`; an unknown code is printed as it is. `symbol` overrides all of that.
+
+Switching is editing `code`, or `make currency CODE=JPY` from a checkout. The file is read once per
+session, so finish with `/reload`. A file that is there but unusable says so in a notification,
+rather than silently showing dollars with nothing to explain why.
+
+## Metrics
 
 ## Metrics
 

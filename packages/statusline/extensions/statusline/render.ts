@@ -143,13 +143,18 @@ export const USD: Currency = { symbol: '$', perUsd: 1 }
 
 /** Currencies the config can name by `code` alone. Anything else needs an explicit `symbol`. */
 const CURRENCY_SYMBOLS: Record<string, string> = {
+  AUD: 'A$',
+  CAD: 'CA$',
+  CHF: 'CHF',
   CNY: '¥',
   EUR: '€',
   GBP: '£',
   HKD: 'HK$',
   INR: '₹',
-  JPY: '¥',
+  // ¥ is CNY's by default; JPY wears the prefixed form so the two never trade places.
+  JPY: 'JP¥',
   KRW: '₩',
+  NZD: 'NZ$',
   RMB: '¥',
   SGD: 'S$',
   TWD: 'NT$',

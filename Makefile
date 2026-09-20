@@ -118,6 +118,10 @@ update-npm: ## Update the installed extension to the latest published release
 remove-npm: ## Remove the installed extension from pi
 	pi remove $(PI_PKG)
 
+.PHONY: currency
+currency: ## Switch the display currency: make currency CODE=JPY
+	bun tools/set-currency/src/index.ts $(CODE)
+
 .PHONY: install-github
 install-github: ## Install the pinned git ref into pi
 	pi install git:$(REMOTE)@$(TAG)
