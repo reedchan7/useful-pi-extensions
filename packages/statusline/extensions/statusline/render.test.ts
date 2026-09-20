@@ -82,9 +82,9 @@ describe('formatLatency', () => {
 })
 
 describe('formatCost', () => {
-  test('trims the padding zeros that toFixed(3) adds, all of them', () => {
+  test('rounds to two decimals and trims the padding zeros, all of them', () => {
     expect(formatCost(0.38)).toBe('$0.38')
-    expect(formatCost(0.003)).toBe('$0.003')
+    expect(formatCost(0.003)).toBe('$0')
     expect(formatCost(1.25)).toBe('$1.25')
     expect(formatCost(1.5)).toBe('$1.5')
     expect(formatCost(10)).toBe('$10')
@@ -92,8 +92,8 @@ describe('formatCost', () => {
 
   test('converts at the configured rate, because pi only ever prices in USD', () => {
     const cny = { symbol: '¥', perUsd: 7.12 }
-    expect(formatCost(1.612, cny)).toBe('¥11.477')
-    expect(formatCost(0.38, cny)).toBe('¥2.706')
+    expect(formatCost(1.612, cny)).toBe('¥11.48')
+    expect(formatCost(0.38, cny)).toBe('¥2.71')
     // A converted amount must not read at a different precision than its neighbour.
     expect(formatCost(2.5, cny)).toBe('¥17.8')
     expect(formatCost(1, { symbol: 'HK$', perUsd: 7.8 })).toBe('HK$7.8')
@@ -359,12 +359,12 @@ describe('contextRow', () => {
     expect(line).toContain('Input 194k')
     expect(line).toContain('Output 89k')
     expect(line).toContain('Cache hit 99.8%')
-    expect(line).toContain('Cost $1.612')
+    expect(line).toContain('Cost $1.61')
     expect(line).toContain('Today $4.36')
   })
 
   test('renders the bill in the configured currency', () => {
-    expect(contextRow(plain, 200, parts, { symbol: '¥', perUsd: 7.12 })).toContain('Cost ¥11.477')
+    expect(contextRow(plain, 200, parts, { symbol: '¥', perUsd: 7.12 })).toContain('Cost ¥11.48')
   })
 
   test('never exceeds the terminal width, at any width', () => {
@@ -380,7 +380,7 @@ describe('contextRow', () => {
     expect(line).not.toContain('175k / 1.0M')
     expect(line).toContain('Input 194k')
     expect(line).toContain('Output 89k')
-    expect(line).toContain('Cost $1.612')
+    expect(line).toContain('Cost $1.61')
   })
 
   test('drops the volumes before it drops the bill', () => {
@@ -388,7 +388,7 @@ describe('contextRow', () => {
     expect(line).not.toContain('Input')
     expect(line).not.toContain('Output')
     expect(line).toContain('Cache hit 99.8%')
-    expect(line).toContain('Cost $1.612')
+    expect(line).toContain('Cost $1.61')
   })
 
   test('keeps the meter alone when nothing else fits', () => {
@@ -405,7 +405,7 @@ describe('contextRow', () => {
     expect(line).toContain('--')
     expect(line).not.toContain('175k /')
     // The totals do not depend on the context reading, so they still render.
-    expect(line).toContain('Cost $1.612')
+    expect(line).toContain('Cost $1.61')
   })
 
   test('omits a group it has no numbers for', () => {

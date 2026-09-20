@@ -326,15 +326,15 @@ export function withCachedRates(
   return `${JSON.stringify({ ...config, rates, fetchedAt }, null, 2)}\n`
 }
 
-/** Three decimals, with one trailing zero trimmed so `$0.380` renders as `$0.38`. */
+/** Two decimals, with padding zeros trimmed so `$0.30` renders as `$0.3`. */
 /**
- * Three decimals, with the padding zeros trimmed so `$0.380` renders as `$0.38`.
+ * Two decimals, with the padding zeros trimmed so `$0.30` renders as `$0.3`.
  *
- * All of them, not just one: a converted amount lands on `¥17.800` often enough that a single
- * trailing zero would show up as `¥17.80` beside `¥2.706` and read as a different precision.
+ * All of them, not just one: a converted amount lands on `¥17.80` often enough that a single
+ * trailing zero would show up as `¥17.8` beside `¥2.71` and read as a different precision.
  */
 export function formatCost(cost: number, currency: Currency = USD): string {
-  return `${currency.symbol}${(cost * currency.perUsd).toFixed(3).replace(/\.?0+$/, '')}`
+  return `${currency.symbol}${(cost * currency.perUsd).toFixed(2).replace(/\.?0+$/, '')}`
 }
 
 /**
