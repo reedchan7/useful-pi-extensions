@@ -706,6 +706,10 @@ export default function (pi: ExtensionAPI) {
       ttftCount += 1
       persist(ctx.sessionManager.getSessionFile() ?? null)
       publish((tokens / decodeMs) * 1000, output > 0, measured)
+    } else if (measured !== null && decodeMs > 0) {
+      // The frozen Last must be this message's whole-message rate, never the last live
+      // sliding-window sample: a buffered burst of chunks mid-stream reads triple.
+      publish((tokens / decodeMs) * 1000, output > 0, measured)
     }
     // Null it with the stream: a request that has produced its message is no longer in flight, and
     // a stale anchor would let the live branch count against nothing until the next turn.

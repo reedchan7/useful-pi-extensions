@@ -65,7 +65,9 @@ export function formatLatency(ms: number): string {
   const clamped = Math.max(0, ms)
   if (clamped < 1000) return `${Math.round(clamped)}ms`
   const seconds = clamped / 1000
-  return `${seconds < 10 ? Math.round(seconds * 10) / 10 : Math.round(seconds)}s`
+  // Fixed one decimal under 10s: dropping the ".0" costs two columns, and the whole row would
+  // twitch every time a ticking count crossed an integer.
+  return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)}s`
 }
 
 /**
