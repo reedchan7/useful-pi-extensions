@@ -18,7 +18,7 @@
  * stepStartTime; decodeMs = completedTime - firstTokenTime; tok/s = usage.output / (decodeMs / 1000)
  */
 
-import { readFile, stat } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -37,6 +37,10 @@ import {
   formatTps,
   isQuietStatus,
   pair,
+  rateFromPayload,
+  cachedRate,
+  cacheIsFresh,
+  withCachedRate,
   row,
   shortenPath,
   ttftDisplay,
@@ -55,6 +59,30 @@ const FALLBACK_TOKENS_PER_CHAR = 0.25
 
 /** The status line's own settings file, alongside pi's other per-tool config. */
 const CONFIG_PATH = join(homedir(), '.pi', 'agent', 'statusline.json')
+/** Free, keyless, updated once a day — which is exactly the freshness a daily rate wants. */
+const RATES_URL = 'https://open.er-api.com/v6/latest/USD'
+const FETCH_TIMEOUT_MS = 5000
+
+function today(): string {
+  const now = new Date()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${now.getFullYear()}-${month}-${day}`
+}
+
+async function fetchRate(code: string): Promise<number | null> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  try {
+    const response = await fetch(RATES_URL, { signal: controller.signal })
+    if (!response.ok) return null
+    return rateFromPayload(await response.json(), code)
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 /**
  * Reads the display currency.
@@ -63,22 +91,34 @@ const CONFIG_PATH = join(homedir(), '.pi', 'agent', 'statusline.json')
  * bug. Editing the file therefore takes effect on `/reload`.
  */
 async function loadCurrency(notify: (message: string) => void): Promise<Currency> {
+  let text: string | null = null
   try {
-    await stat(CONFIG_PATH)
+    text = await readFile(CONFIG_PATH, 'utf8')
   } catch {
     // No config file is the normal case, and it means USD.
     return USD
   }
-  let text: string
-  try {
-    text = await readFile(CONFIG_PATH, 'utf8')
-  } catch {
-    notify('statusline.json exists but could not be read, showing USD')
-    return USD
-  }
-  const { currency, problem } = currencyFromConfig(text)
+  const { currency, pending, problem } = currencyFromConfig(text)
   if (problem !== null) notify(problem)
-  return currency
+  if (pending === null) return currency
+
+  const cached = cachedRate(text)
+  if (cached !== null && cacheIsFresh(cached.fetchedAt, today())) {
+    return { symbol: pending.symbol, perUsd: cached.perUsd }
+  }
+
+  const fetched = await fetchRate(pending.code)
+  if (fetched !== null) {
+    try {
+      await writeFile(CONFIG_PATH, withCachedRate(text, fetched, today()))
+    } catch {
+      // The session still runs on the fetched rate; only tomorrow's warm start is lost.
+    }
+    return { symbol: pending.symbol, perUsd: fetched }
+  }
+  if (cached !== null) return { symbol: pending.symbol, perUsd: cached.perUsd }
+  notify(`could not fetch a ${pending.code} rate, showing USD`)
+  return USD
 }
 
 /** A content block as providers stream it; every field is read defensively. */

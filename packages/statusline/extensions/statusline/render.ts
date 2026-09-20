@@ -169,48 +169,129 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * @param raw - The `currency` value from a parsed config file.
  * @returns The currency, or null when the block could not be used.
  */
+/** The identity a currency block asks for: the API code and the symbol to print. */
+interface CurrencyIdentity {
+  code: string
+  symbol: string
+}
+
+function currencyIdentity(raw: Record<string, unknown>): CurrencyIdentity | null {
+  const code = typeof raw.code === 'string' ? raw.code.trim().toUpperCase() : ''
+  const explicit = typeof raw.symbol === 'string' ? raw.symbol : ''
+  const symbol = explicit || CURRENCY_SYMBOLS[code] || code
+  return symbol === '' ? null : { code, symbol }
+}
+
 export function parseCurrency(raw: unknown): Currency | null {
   if (!isRecord(raw)) return null
   const rate = raw.perUsd
   if (typeof rate !== 'number' || !Number.isFinite(rate) || rate <= 0) return null
-  const code = typeof raw.code === 'string' ? raw.code.trim().toUpperCase() : ''
-  const explicit = typeof raw.symbol === 'string' ? raw.symbol : ''
-  const symbol = explicit || CURRENCY_SYMBOLS[code] || code
-  return symbol === '' ? null : { symbol, perUsd: rate }
+  const identity = currencyIdentity(raw)
+  return identity === null ? null : { symbol: identity.symbol, perUsd: rate }
 }
 
-/** A currency, plus the message to show when the config named one that could not be used. */
+/** A currency, plus what to do when the config named one without a rate of its own. */
 export interface CurrencyConfig {
   currency: Currency
+  /** Set when the block names a code but no rate: the rate comes from a daily fetch. */
+  pending: { code: string; symbol: string } | null
   problem: string | null
 }
 
 /**
  * The display currency a config file asks for.
  *
+ * A block with `perUsd` is a rate the user pinned, and is used as it is. A block with only a `code`
+ * asks for the market rate, which the caller fetches once a day — this returns what to fetch and
+ * the symbol to spend it with, and the caller decides what a failed fetch falls back to.
+ *
  * @param text - The contents of the config file, or null when it does not exist. Absent is the
  *   normal case and is not a problem; a file that is there but unusable is, because the footer
  *   would otherwise keep showing dollars with nothing to explain it.
  */
 export function currencyFromConfig(text: string | null): CurrencyConfig {
-  if (text === null) return { currency: USD, problem: null }
+  if (text === null) return { currency: USD, pending: null, problem: null }
   let config: unknown
   try {
     config = JSON.parse(text)
   } catch {
-    return { currency: USD, problem: 'statusline.json is not valid JSON, showing USD' }
-  }
-  if (!isRecord(config) || !Object.hasOwn(config, 'currency')) {
-    return { currency: USD, problem: null }
-  }
-  const currency = parseCurrency(config.currency)
-  if (currency === null) {
     return {
       currency: USD,
-      problem: 'statusline.json currency needs a positive perUsd, showing USD',
+      pending: null,
+      problem: 'statusline.json is not valid JSON, showing USD',
     }
   }
-  return { currency, problem: null }
+  if (!isRecord(config) || !Object.hasOwn(config, 'currency')) {
+    return { currency: USD, pending: null, problem: null }
+  }
+  if (!isRecord(config.currency)) {
+    return {
+      currency: USD,
+      pending: null,
+      problem: 'statusline.json currency needs a code with a rate, or perUsd, showing USD',
+    }
+  }
+  const identity = currencyIdentity(config.currency)
+  const rate = config.currency.perUsd
+  if (typeof rate === 'number' && Number.isFinite(rate) && rate > 0) {
+    return {
+      currency: { symbol: identity?.symbol ?? '$', perUsd: rate },
+      pending: null,
+      problem: null,
+    }
+  }
+  if (identity !== null && !Object.hasOwn(config.currency, 'perUsd')) {
+    return { currency: USD, pending: identity, problem: null }
+  }
+  return {
+    currency: USD,
+    pending: null,
+    problem: 'statusline.json currency needs a code with a rate, or perUsd, showing USD',
+  }
+}
+
+/** One rate out of an open.er-api.com payload (`{"rates": {"CNY": 7.12}}`), read defensively. */
+export function rateFromPayload(payload: unknown, code: string): number | null {
+  if (!isRecord(payload) || !isRecord(payload.rates)) return null
+  const rate = payload.rates[code]
+  return typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : null
+}
+
+/** The rate a config file cached from an earlier fetch, and the day it was fetched. */
+export function cachedRate(text: string): { perUsd: number; fetchedAt: string } | null {
+  let config: unknown
+  try {
+    config = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (!isRecord(config)) return null
+  const perUsd = config.fetchedPerUsd
+  const fetchedAt = config.fetchedAt
+  if (typeof perUsd !== 'number' || !Number.isFinite(perUsd) || perUsd <= 0) return null
+  return typeof fetchedAt === 'string' ? { perUsd, fetchedAt } : null
+}
+
+/** Whether a cached rate was fetched today, both dates as `YYYY-MM-DD`. */
+export function cacheIsFresh(fetchedAt: string, today: string): boolean {
+  return fetchedAt.slice(0, 10) === today
+}
+
+/**
+ * The config file's text with a fetched rate recorded in it, so the next session starts warm.
+ *
+ * Unknown keys are kept, and a file that does not parse is returned untouched: the extension has no
+ * business replacing a config it could not read with one it wrote.
+ */
+export function withCachedRate(text: string, perUsd: number, fetchedAt: string): string {
+  let config: unknown
+  try {
+    config = JSON.parse(text)
+  } catch {
+    return text
+  }
+  if (!isRecord(config)) return text
+  return `${JSON.stringify({ ...config, fetchedPerUsd: perUsd, fetchedAt }, null, 2)}\n`
 }
 
 /** Three decimals, with one trailing zero trimmed so `$0.380` renders as `$0.38`. */

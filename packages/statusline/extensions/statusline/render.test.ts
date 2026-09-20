@@ -26,6 +26,10 @@ import {
   percentColor,
   row,
   shortenPath,
+  rateFromPayload,
+  cachedRate,
+  cacheIsFresh,
+  withCachedRate,
   ttftDisplay,
   ttftMs,
   USD,
@@ -123,27 +127,74 @@ describe('parseCurrency', () => {
 
 describe('currencyFromConfig', () => {
   test('an absent file is the normal case and means USD', () => {
-    expect(currencyFromConfig(null)).toEqual({ currency: USD, problem: null })
+    expect(currencyFromConfig(null)).toEqual({ currency: USD, pending: null, problem: null })
   })
 
   test('a file with no currency block is not a problem to report', () => {
-    expect(currencyFromConfig('{}')).toEqual({ currency: USD, problem: null })
-    expect(currencyFromConfig('{"theme":"dark"}')).toEqual({ currency: USD, problem: null })
+    expect(currencyFromConfig('{}')).toEqual({ currency: USD, pending: null, problem: null })
+    expect(currencyFromConfig('{"theme":"dark"}')).toEqual({
+      currency: USD,
+      pending: null,
+      problem: null,
+    })
   })
 
   test('reads the configured currency', () => {
     expect(currencyFromConfig('{"currency":{"code":"CNY","perUsd":7.12}}')).toEqual({
       currency: { symbol: '¥', perUsd: 7.12 },
+      pending: null,
       problem: null,
     })
+  })
+
+  test('a code without a rate asks for the market rate of the day', () => {
+    const result = currencyFromConfig('{"currency":{"code":"CNY"}}')
+    expect(result.currency).toEqual(USD)
+    expect(result.pending).toEqual({ code: 'CNY', symbol: '¥' })
+    expect(result.problem).toBeNull()
   })
 
   test('reports a file that exists but cannot be used', () => {
     // Falling back silently would leave the footer showing dollars with nothing to explain why.
     expect(currencyFromConfig('{ not json').problem).toContain('not valid JSON')
-    expect(currencyFromConfig('{"currency":{"code":"CNY"}}').problem).toContain('perUsd')
-    expect(currencyFromConfig('{"currency":null}').problem).toContain('perUsd')
+    expect(currencyFromConfig('{"currency":{"code":"CNY","perUsd":"7.1"}}').problem).toContain(
+      'perUsd',
+    )
     expect(currencyFromConfig('{ not json').currency).toEqual(USD)
+  })
+})
+
+describe('rateFromPayload', () => {
+  test('reads the requested code out of an open.er-api.com payload', () => {
+    expect(rateFromPayload({ rates: { USD: 1, CNY: 7.12 } }, 'CNY')).toBe(7.12)
+    expect(rateFromPayload({ rates: { USD: 1 } }, 'CNY')).toBeNull()
+    expect(rateFromPayload({ result: 'success' }, 'CNY')).toBeNull()
+    expect(rateFromPayload('nope', 'CNY')).toBeNull()
+  })
+})
+
+describe('cachedRate, cacheIsFresh and withCachedRate', () => {
+  const file = '{"currency":{"code":"CNY"},"fetchedPerUsd":7.14,"fetchedAt":"2026-09-20"}'
+
+  test('reads back what a fetch wrote, and ignores a cache that is not a positive number', () => {
+    expect(cachedRate(file)).toEqual({ perUsd: 7.14, fetchedAt: '2026-09-20' })
+    expect(cachedRate('{"fetchedPerUsd":"7.14"}')).toBeNull()
+    expect(cachedRate('{}')).toBeNull()
+  })
+
+  test('a cache is fresh on the day it was fetched and stale the day after', () => {
+    expect(cacheIsFresh('2026-09-20', '2026-09-20')).toBe(true)
+    expect(cacheIsFresh('2026-09-20', '2026-09-21')).toBe(false)
+  })
+
+  test('writes the fetch back without disturbing the keys it does not own', () => {
+    const updated = withCachedRate(file, 7.15, '2026-09-21')
+    expect(cachedRate(updated)).toEqual({ perUsd: 7.15, fetchedAt: '2026-09-21' })
+    expect(updated).toContain('"code": "CNY"')
+  })
+
+  test('never overwrites a file it could not parse', () => {
+    expect(withCachedRate('{ not json', 7.15, '2026-09-21')).toBe('{ not json')
   })
 })
 
