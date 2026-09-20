@@ -296,6 +296,11 @@ export function avgTokPerSec(outputTokens: number, decodeMs: number): number | n
   return outputTokens / (decodeMs / 1000)
 }
 
+/** Mean of `count` durations totalling `totalMs`; null when nothing was measured. */
+export function avgMs(totalMs: number, count: number): number | null {
+  return count > 0 ? totalMs / count : null
+}
+
 /**
  * The config file's text with the day's rates recorded in it, so the next session starts warm.
  *
@@ -435,18 +440,28 @@ export function contextRow(
   const volumes: string[] = []
   if (parts.input > 0) volumes.push(pair(theme, 'Input', formatTokens(parts.input)))
   if (parts.output > 0) volumes.push(pair(theme, 'Output', formatTokens(parts.output)))
-  const outcomes: string[] = []
+  const hit: string[] = []
   if (parts.cacheHitRate !== null) {
-    outcomes.push(pair(theme, 'Cache hit', `${parts.cacheHitRate.toFixed(1)}%`))
+    hit.push(pair(theme, 'Cache hit', `${parts.cacheHitRate.toFixed(1)}%`))
   }
-  if (parts.cost > 0) outcomes.push(pair(theme, 'Cost', formatCost(parts.cost, currency)))
+  const money: string[] = []
+  if (parts.cost > 0) money.push(pair(theme, 'Cost', formatCost(parts.cost, currency)))
   if (parts.todayCost > 0) {
-    outcomes.push(pair(theme, 'Today', formatCost(parts.todayCost, currency)))
+    money.push(pair(theme, 'Today', formatCost(parts.todayCost, currency)))
   }
 
   const separator = theme.fg('dim', '  ·  ')
-  const full = [...volumes, ...outcomes].join(separator)
-  const core = outcomes.join(separator)
+  // Groups, not a flat run of dots: volumes | cache | money. A wall between different kinds of
+  // number reads faster than another dot between similar-looking ones.
+  const groups: string[] = []
+  if (volumes.length > 0) groups.push(volumes.join(separator))
+  if (hit.length > 0) groups.push(hit.join(separator))
+  if (money.length > 0) groups.push(money.join(separator))
+  const full = groups.join(theme.fg('dim', '  |  '))
+  const core =
+    hit.length > 0 && money.length > 0
+      ? hit.join(separator) + theme.fg('dim', '  |  ') + money.join(separator)
+      : [...hit, ...money].join(separator)
   const fits = (left: string, right: string): boolean =>
     right === '' || visibleWidth(left) + 2 + visibleWidth(right) <= width
 

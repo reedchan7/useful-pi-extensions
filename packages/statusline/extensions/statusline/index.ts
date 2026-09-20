@@ -37,6 +37,7 @@ import {
   formatCwd,
   formatLatency,
   formatTps,
+  avgMs,
   isQuietStatus,
   pair,
   cachedRates,
@@ -65,6 +66,8 @@ const CONFIG_PATH = join(homedir(), '.pi', 'agent', 'statusline.json')
 const RATES_URL = 'https://open.er-api.com/v6/latest/USD'
 /** Every session on this machine, for the day-cost total that spans projects and models. */
 const SESSIONS_DIR = join(homedir(), '.pi', 'agent', 'sessions')
+/** Where throughput metrics wait out a /reload: keyed by session file, so a reload restores. */
+const STATE_PATH = join(homedir(), '.pi', 'agent', 'statusline-state.json')
 const FETCH_TIMEOUT_MS = 5000
 
 function today(): string {
@@ -108,6 +111,11 @@ function startOfToday(): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Coerces a persisted counter back to a non-negative finite number, or 0. */
+function num(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0
 }
 
 /** Today's provider cost of one session-file line, or null when the line bills nothing today. */
@@ -326,6 +334,8 @@ export default function (pi: ExtensionAPI) {
   let firstTokenAt: number | null = null
   let totalDecodeMs = 0
   let totalMeasuredOutput = 0
+  let totalTtftMs = 0
+  let ttftCount = 0
   let todayBase = 0
   let ticker: ReturnType<typeof setInterval> | null = null
   let windowAt = 0
@@ -365,6 +375,48 @@ export default function (pi: ExtensionAPI) {
     }, TICK_MS)
   }
 
+  /**
+   * Writes the throughput metrics so a /reload can restore them.
+   *
+   * Decode timing only exists in live stream events — pi records nothing per message — so without
+   * this file the session's averages reset to zero every time the extension re-loads.
+   */
+  function persist(sessionFile: string | null): void {
+    if (sessionFile === null) return
+    const state = {
+      sessionFile,
+      totalDecodeMs,
+      totalMeasuredOutput,
+      totalTtftMs,
+      ttftCount,
+      last: reading,
+    }
+    void writeFile(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`).catch(() => {})
+  }
+
+  /** Restores what persist wrote, but only for this exact session file. */
+  async function restore(sessionFile: string | null): Promise<void> {
+    if (sessionFile === null) return
+    let state: unknown
+    try {
+      state = JSON.parse(await readFile(STATE_PATH, 'utf8'))
+    } catch {
+      return
+    }
+    if (!isRecord(state) || state.sessionFile !== sessionFile) return
+    totalDecodeMs = num(state.totalDecodeMs)
+    totalMeasuredOutput = num(state.totalMeasuredOutput)
+    totalTtftMs = num(state.totalTtftMs)
+    ttftCount = num(state.ttftCount)
+    if (isRecord(state.last) && typeof state.last.rate === 'number') {
+      reading = {
+        rate: state.last.rate,
+        exact: state.last.exact === true,
+        ttftMs: typeof state.last.ttftMs === 'number' ? state.last.ttftMs : null,
+      }
+    }
+  }
+
   function installFooter(ctx: ExtensionContext): void {
     ctx.ui.setFooter((tui, theme, footerData: ReadonlyFooterDataProvider) => {
       requestRender = () => tui.requestRender()
@@ -394,19 +446,31 @@ export default function (pi: ExtensionAPI) {
             currency,
           )
 
-          // Row 2: model and the latest turn's timing on the right, path on the left.
+          // Row 2: model and the latest turn's timing on the right, path on the left. Three
+          // groups — identity, first token, throughput — separated by a wall instead of another
+          // dot, because a run of similar-looking pairs is what made the old footer unreadable.
           const model = ctx.model?.id ?? 'no model'
-          const row2Parts = [theme.fg('accent', model)]
-          if (ctx.thinkingLevel) row2Parts.push(pair(theme, 'Effort', ctx.thinkingLevel, 'muted'))
+          const separator = theme.fg('dim', '  ·  ')
+          const wall = theme.fg('dim', '  |  ')
+          const identity = [theme.fg('accent', model)]
+          if (ctx.thinkingLevel) identity.push(pair(theme, 'Effort', ctx.thinkingLevel, 'muted'))
+
+          const ttft: string[] = []
           const waiting = ttftDisplay(requestAt, firstTokenAt, Date.now())
           if (waiting !== null) {
             // The clock is running: this wait has no reading yet, so the previous turn's
-            // throughput would only be mistaken for the current one.
-            row2Parts.push(pair(theme, 'TTFT', waiting.text, 'muted'))
+            // numbers would only be mistaken for the current one.
+            ttft.push(pair(theme, 'TTFT', waiting.text, 'muted'))
           } else if (reading) {
             if (reading.ttftMs !== null)
-              row2Parts.push(pair(theme, 'TTFT', formatLatency(reading.ttftMs), 'muted'))
-            row2Parts.push(
+              ttft.push(pair(theme, 'TTFT', formatLatency(reading.ttftMs), 'muted'))
+          }
+          const avgTtft = avgMs(totalTtftMs, ttftCount)
+          if (avgTtft !== null) ttft.push(pair(theme, 'Avg TTFT', formatLatency(avgTtft), 'muted'))
+
+          const throughput: string[] = []
+          if (reading) {
+            throughput.push(
               pair(
                 theme,
                 'Last',
@@ -415,9 +479,12 @@ export default function (pi: ExtensionAPI) {
               ),
             )
           }
-          if (avg !== null) row2Parts.push(pair(theme, 'Avg', `${formatTps(avg)} tok/s`, 'muted'))
-          const row2Right = row2Parts.join(theme.fg('dim', '  ·  '))
+          if (avg !== null) throughput.push(pair(theme, 'Avg', `${formatTps(avg)} tok/s`, 'muted'))
 
+          const row2Right = [identity, ttft, throughput]
+            .filter((group) => group.length > 0)
+            .map((group) => group.join(separator))
+            .join(wall)
           const branch = footerData.getGitBranch()
           const path = formatCwd(ctx.cwd)
           const branchSuffix = branch ? ` (${branch})` : ''
@@ -481,6 +548,7 @@ export default function (pi: ExtensionAPI) {
     resetStream()
     currency = await loadCurrency((message) => ctx.ui.notify(message, 'warning'))
     const file = ctx.sessionManager.getSessionFile()
+    await restore(file ?? null)
     todayBase = await sumOtherTodaysCost(file ?? null, startOfToday())
     installFooter(ctx)
   })
@@ -546,7 +614,7 @@ export default function (pi: ExtensionAPI) {
     publish(rate, false, ttftMs(requestAt, firstTokenAt))
   })
 
-  pi.on('message_end', async (event) => {
+  pi.on('message_end', async (event, ctx) => {
     if (event.message.role !== 'assistant') return
 
     const message = event.message as { content: unknown; usage?: { output?: number } }
@@ -566,6 +634,9 @@ export default function (pi: ExtensionAPI) {
       // below once produced an Avg of 4324 tok/s.
       totalDecodeMs += decodeMs
       if (output > 0) totalMeasuredOutput += output
+      totalTtftMs += measured
+      ttftCount += 1
+      persist(ctx.sessionManager.getSessionFile() ?? null)
       publish((tokens / decodeMs) * 1000, output > 0, measured)
     }
     // Null it with the stream: a request that has produced its message is no longer in flight, and

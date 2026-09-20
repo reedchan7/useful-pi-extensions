@@ -7,8 +7,8 @@
 替换 pi 的 footer，改成带文字标签的两行。每个值都带一个词，不需要靠符号猜、也不需要记图例。
 
 ```
-Context  █████████▍░░░░░░░░░░  47%   471k / 1.0M     Input 194k  ·  Output 89k  ·  Cache hit 99.9%  ·  Cost $0.229  ·  Today $1.63
-~/.pi (master)                                                               deepseek-flash · Effort high · TTFT 482ms · 729 tok/s
+Context  █████████▍░░░░░░░░░░  47%   471k / 1.0M     Input 194k  ·  Output 89k  |  Cache hit 99.9%  |  Cost $0.229  ·  Today $1.63
+~/.pi (master)                         deepseek-flash · Effort high | TTFT 482ms · Avg TTFT 612ms | Last 729 tok/s · Avg 512 tok/s
 LSP Active: typescript
 ```
 
