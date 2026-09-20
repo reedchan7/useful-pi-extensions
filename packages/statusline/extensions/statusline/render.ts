@@ -332,9 +332,14 @@ export function withCachedRates(
  *
  * All of them, not just one: a converted amount lands on `¥17.80` often enough that a single
  * trailing zero would show up as `¥17.8` beside `¥2.71` and read as a different precision.
+ *
+ * A nonzero amount that rounds down to zero renders as a bounded floor, `<$0.01`, because `$0`
+ * claims nothing was spent — the one thing a billing figure must never say.
  */
 export function formatCost(cost: number, currency: Currency = USD): string {
-  return `${currency.symbol}${(cost * currency.perUsd).toFixed(2).replace(/\.?0+$/, '')}`
+  const amount = cost * currency.perUsd
+  if (cost > 0 && Number(amount.toFixed(2)) === 0) return `<${currency.symbol}0.01`
+  return `${currency.symbol}${amount.toFixed(2).replace(/\.?0+$/, '')}`
 }
 
 /**

@@ -84,7 +84,9 @@ describe('formatLatency', () => {
 describe('formatCost', () => {
   test('rounds to two decimals and trims the padding zeros, all of them', () => {
     expect(formatCost(0.38)).toBe('$0.38')
-    expect(formatCost(0.003)).toBe('$0')
+    expect(formatCost(0.003)).toBe('<$0.01')
+    expect(formatCost(0.0005, { symbol: '¥', perUsd: 7.12 })).toBe('<¥0.01')
+    expect(formatCost(0.006)).toBe('$0.01')
     expect(formatCost(1.25)).toBe('$1.25')
     expect(formatCost(1.5)).toBe('$1.5')
     expect(formatCost(10)).toBe('$10')
