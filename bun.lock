@@ -17,7 +17,7 @@
     },
     "packages/statusline": {
       "name": "@reedchan/statusline",
-      "version": "0.1.0",
+      "version": "1.11.1",
       "peerDependencies": {
         "@earendil-works/pi-coding-agent": "*",
         "@earendil-works/pi-tui": "*",

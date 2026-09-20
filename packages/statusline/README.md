@@ -5,7 +5,7 @@ English | [中文](README_CN.md)
 [npm](https://www.npmjs.com/package/@reedchan/statusline) · [pi packages gallery](https://pi.dev/packages/@reedchan/statusline) · [repository](https://github.com/reedchan7/useful-pi-extensions)
 
 Replaces pi's footer with a labelled two-row one. Every value carries a word, so nothing has to
-be decoded from a symbol or remembered from a legend. `ctrl+e` opens an optional context-breakdown
+be decoded from a symbol or remembered from a legend. `ctrl+q` opens an optional context-breakdown
 panel (next section) when you want to see what is occupying the window.
 
 ```text
@@ -24,7 +24,7 @@ columns only the meter is left. Every step is a whole value — a number is neve
 | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Context window` + meter + `47%` | Share of the model's context window in use. The fill turns `warning` above 70% and `error` above 90%, the same thresholds pi's shipped footer uses, and the percentage changes color with it |
 | `471k / 1.0M`                    | Absolute context tokens over the window size. The first thing dropped when the terminal is narrow                                                                                            |
-| Breakdown panel                  | What occupies the window — opt-in via `ctrl+e` or `/breakdown` — one bucket per line under a total. See [Context breakdown](#context-breakdown)                                              |
+| Breakdown panel                  | What occupies the window — opt-in via `ctrl+q` or `/breakdown` — one bucket per line under a total. See [Context breakdown](#context-breakdown)                                              |
 | `Input` / `Output`               | Session prompt and completion tokens. `Input` counts the prompt tokens that were neither read from nor written to cache, because pi reports those two separately in the same `usage` object  |
 | `Cache hit`                      | The latest turn's cache hit rate, `cacheRead / (input + cacheRead + cacheWrite)`                                                                                                             |
 | `Cost`                           | Session cost, in USD unless a config file names another currency (see below)                                                                                                                 |
@@ -46,7 +46,7 @@ The glyphs are that preset's block fill and shaded block track, with a 1/8-cell 
 
 ## Context breakdown
 
-`ctrl+e` or `/breakdown` opens an opt-in panel that answers the question the meter raises: what
+`ctrl+q` or `/breakdown` opens an opt-in panel that answers the question the meter raises: what
 is actually occupying the window. The concise footer stays the default; the choice is remembered
 in `~/.pi/agent/statusline/config.json` (`"detail": true`).
 
@@ -101,9 +101,10 @@ multi-provider). **Deferred tools** have no pi equivalent either — every activ
 always on the wire.
 
 The panel is ~50 columns wide and fits any terminal by truncating rather than by dropping
-buckets. The toggle lives on `ctrl+e` because `ctrl+j` is a bare LF in legacy terminals and reads
-as Enter; if another extension owns `ctrl+e` on your machine, the key is `BREAKDOWN_SHORTCUT` at
-the top of `index.ts`.
+buckets. The toggle lives on `ctrl+q`: `ctrl+j` is a bare LF in legacy terminals and reads
+as Enter, and `ctrl+e` is taken by pi's built-in cursor-to-line-end (`tui.editor.cursorLineEnd`);
+`ctrl+q` is unbound in pi's default keymaps. If another extension owns `ctrl+q` on your machine,
+the key is `BREAKDOWN_SHORTCUT` at the top of `index.ts`.
 
 Configuration lives at the top of [`render.ts`](render.ts):
 

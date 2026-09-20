@@ -89,10 +89,12 @@ const DEFAULT_RESERVE_TOKENS = 16_384
  * The key that toggles the breakdown line; change here if another extension owns it.
  *
  * Ctrl+j was tried first and had to go: legacy terminals send it as a bare LF, which is
- * indistinguishable from Enter, so it typed newlines instead of toggling. ctrl+e is unbound across
- * pi's default keymaps and in every extension installed on this machine.
+ * indistinguishable from Enter, so it typed newlines instead of toggling. ctrl+e then collided with
+ * pi's built-in tui.editor.cursorLineEnd. ctrl+q is free: unbound in both pi-tui's TUI_KEYBINDINGS
+ * and pi's app KEYBINDINGS on macOS/Linux (only Windows maps ctrl+q, to followUp), and pi already
+ * binds ctrl+s, so the terminal runs with flow control (IXON) off and ctrl+q reaches the app.
  */
-const BREAKDOWN_SHORTCUT = 'ctrl+e'
+const BREAKDOWN_SHORTCUT = 'ctrl+q'
 const FETCH_TIMEOUT_MS = 5000
 
 function today(): string {
@@ -599,7 +601,7 @@ export default function (pi: ExtensionAPI) {
           )
 
           // The breakdown panel sits directly under the meter it explains, before the identity
-          // row. The concise footer renders by default; ctrl+e or /breakdown opens the panel.
+          // row. The concise footer renders by default; ctrl+q or /breakdown opens the panel.
           let breakdown: string[] | null = null
           if (detailVisible) {
             const window =
@@ -848,9 +850,8 @@ export default function (pi: ExtensionAPI) {
   })
 
   // The breakdown panel is opt-in: the concise footer stays the default. Both toggles remember
-  // the choice in the config file. ctrl+e is unbound across pi's default keymaps and in every
-  // extension installed on this machine; if another extension owns it here, BREAKDOWN_SHORTCUT
-  // is the one place to move it.
+  // the choice in the config file. ctrl+q is unbound across pi's default keymaps; if another
+  // extension owns it here, BREAKDOWN_SHORTCUT is the one place to move it.
   pi.registerShortcut(BREAKDOWN_SHORTCUT, {
     description: 'Toggle the context breakdown panel in the status line',
     handler: () => {

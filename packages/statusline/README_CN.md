@@ -5,7 +5,7 @@
 [npm](https://www.npmjs.com/package/@reedchan/statusline) · [pi packages 画廊](https://pi.dev/packages/@reedchan/statusline) · [仓库](https://github.com/reedchan7/useful-pi-extensions)
 
 替换 pi 的 footer，改成带文字标签的两行。每个值都带一个词，不需要靠符号猜、也不需要记图例。
-需要看窗口里到底装了什么时，`ctrl+e` 可打开一个可选的上下文明细面板（见下文）。
+需要看窗口里到底装了什么时，`ctrl+q` 可打开一个可选的上下文明细面板（见下文）。
 
 ```text
 Context window  █████████▍░░░░░░░░░░  47%   471k / 1.0M     Input 194k  ·  Output 89k  |  Cache hit 99.9%  |  Cost $0.23  ·  Today $1.63
@@ -23,7 +23,7 @@ LSP Active: typescript
 | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `Context window` + 仪表 + `47.1%` | 已占模型上下文窗口的比例。填充超过 70% 转 `warning`、超过 90% 转 `error`（与 pi 原生 footer 同一套阈值），百分比同步变色                |
 | `471k / 1.0M`                     | 上下文已用 token / 窗口大小。终端变窄时**第一个被舍弃**                                                                                 |
-| Breakdown 面板                    | 窗口里到底装了什么，总数领队、每桶一行——可选，`ctrl+e` 或 `/breakdown` 打开。见[上下文明细](#上下文明细)                                |
+| Breakdown 面板                    | 窗口里到底装了什么，总数领队、每桶一行——可选，`ctrl+q` 或 `/breakdown` 打开。见[上下文明细](#上下文明细)                                |
 | `Input` / `Output`                | 会话的输入与输出 token 量。`Input` 指既没命中缓存、也没写入缓存的那部分 prompt token，因为 pi 把这两种情况在同一个 `usage` 对象里分开报 |
 | `Cache hit`                       | 最近一轮的缓存命中率，`cacheRead / (input + cacheRead + cacheWrite)`                                                                    |
 | `Cost`                            | 会话花费，默认美元；配置了其他币种则换算显示（见下）                                                                                    |
@@ -44,7 +44,7 @@ LSP Active: typescript
 
 ## 上下文明细
 
-`ctrl+e` 或 `/breakdown` 打开一个可选面板，回答仪表提出的问题：窗口里到底装了什么。
+`ctrl+q` 或 `/breakdown` 打开一个可选面板，回答仪表提出的问题：窗口里到底装了什么。
 简洁两行是默认形态；开关状态记在 `~/.pi/agent/statusline/config.json`（`"detail": true`）。
 
 ```text
@@ -92,9 +92,10 @@ Claude Code 面板里有、而这里有意不做的：**Custom agents**（pi 没
 （特定厂商的订阅额度，pi 是多 provider 的）。**Deferred tools** 在 pi 里也没有对应物——
 激活工具的 schema 永远在线上。
 
-面板约 50 列宽，任何终端都放得下；放不下时逐行截断，而不是丢桶。开关键默认 `ctrl+e`——
-原本选的 `ctrl+j` 在传统终端里就是一个裸 LF，和回车无法区分；如果你的机器上 `ctrl+e`
-已被其他扩展占用，改 `index.ts` 顶部的 `BREAKDOWN_SHORTCUT` 即可。
+面板约 50 列宽，任何终端都放得下；放不下时逐行截断，而不是丢桶。开关键默认 `ctrl+q`——
+`ctrl+j` 在传统终端里是一个裸 LF，和回车无法区分，`ctrl+e` 又撞上了 pi 内建的
+光标移行尾（`tui.editor.cursorLineEnd`）；`ctrl+q` 在 pi 的默认键位里是空着的。如果你的机器上
+`ctrl+q` 已被其他扩展占用，改 `index.ts` 顶部的 `BREAKDOWN_SHORTCUT` 即可。
 
 可调项在 [`render.ts`](render.ts) 顶部：
 
