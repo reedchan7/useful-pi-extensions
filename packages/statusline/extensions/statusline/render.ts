@@ -440,7 +440,8 @@ export function contextRow(
     // Whole percents: the meter carries the precision, and a decimal here is noise.
     parts.percent === null ? '--' : `${Math.round(parts.percent)}%`,
   )
-  const meter = `${theme.fg('dim', 'Context')}  ${bar(theme, BAR_CELLS, fraction)}  ${percent}`
+  // The title is Claude Code's: "Context window", so the two panels read the same at a glance.
+  const meter = `${theme.fg('dim', 'Context window')}  ${bar(theme, BAR_CELLS, fraction)}  ${percent}`
   const detail =
     parts.window > 0 ? `${formatTokens(parts.tokens)} / ${formatTokens(parts.window)}` : ''
   const withDetail = detail === '' ? meter : `${meter}   ${theme.fg('dim', detail)}`
@@ -489,4 +490,383 @@ export function isQuietStatus(key: string, value: unknown): boolean {
   const rule = QUIET_STATUS.find(([candidate]) => candidate === key)
   if (!rule) return false
   return rule[1].test(String(value).replace(ANSI, '').trim())
+}
+
+// ----------------------------------------------------------------------------
+// Context breakdown
+//
+// Claude Code's context panel answers "what is occupying the window": messages, memory files,
+// tools, skills, and what is left. pi exposes every ingredient through public API, and this
+// section turns them into one footer line.
+//
+// The accounting rule is pi's own: every bucket is tokens = ceil(chars / 4), the same heuristic
+// as estimateTokens in core/compaction. So every number here is an estimate, and the buckets
+// differ from the row-1 total (which comes from provider usage) by the same margin pi's own
+// estimate does. Claude Code's panel has the same property — its buckets also sum past its
+// header total.
+// ----------------------------------------------------------------------------
+
+/** Tokens from characters, by pi's own chars/4 heuristic (estimateTokens in core/compaction). */
+export function tokensFromChars(chars: number): number {
+  return Math.ceil(Math.max(0, chars) / 4)
+}
+
+/** Images carry this many estimated characters each, pi's own ESTIMATED_IMAGE_CHARS. */
+const IMAGE_CHARS = 4800
+
+/** Characters of message content: strings, text blocks, tool calls and image placeholders. */
+export function contentChars(content: unknown): number {
+  if (typeof content === 'string') return content.length
+  if (!Array.isArray(content)) return 0
+  let chars = 0
+  for (const raw of content as unknown[]) {
+    if (!isRecord(raw)) continue
+    if (raw.type === 'text' && typeof raw.text === 'string') chars += raw.text.length
+    else if (raw.type === 'thinking' && typeof raw.thinking === 'string')
+      chars += raw.thinking.length
+    else if (raw.type === 'image') chars += IMAGE_CHARS
+    else if (raw.type === 'toolCall') {
+      const name = typeof raw.name === 'string' ? raw.name.length : 0
+      let args = 0
+      try {
+        args = JSON.stringify(raw.arguments ?? {}).length
+      } catch {
+        // A circular argument object is not worth a crash; count the rest.
+      }
+      chars += name + args
+    }
+  }
+  return chars
+}
+
+/**
+ * Tokens one context entry occupies in the window, mirroring pi's sessionEntryToContextMessages:
+ * message entries count as their role renders, custom messages and compaction/branch summaries
+ * count as the text replayed into context, and system messages count as zero because the prompt
+ * bucket below already owns them (counting both would double the prompt).
+ *
+ * Reads structurally and returns 0 for anything it does not recognize, so a hand-edited session
+ * file degrades to an underestimate instead of a crash.
+ */
+export function entryChars(entry: unknown): number {
+  if (!isRecord(entry)) return 0
+  if (entry.type === 'message') {
+    const message = entry.message
+    if (!isRecord(message)) return 0
+    if (message.role === 'system') return 0
+    return contentChars(message.content)
+  }
+  if (
+    entry.type === 'custom_message' ||
+    entry.type === 'compaction' ||
+    entry.type === 'branch_summary'
+  ) {
+    return typeof entry.summary === 'string' ? entry.summary.length : contentChars(entry.content)
+  }
+  return 0
+}
+
+/** Tokens for a whole context-entry list, as `sessionManager.buildContextEntries()` returns. */
+export function messagesTokens(entries: readonly unknown[]): number {
+  let chars = 0
+  for (const entry of entries) chars += entryChars(entry)
+  return tokensFromChars(chars)
+}
+
+/**
+ * The inner text and the full tagged span of one system-prompt section, or null when absent.
+ *
+ * Pi renders every section as `<tag>\n...\n</tag>` (buildSystemPromptSections), so a plain indexOf
+ * pair is exact and cannot trip over regex metacharacters in the prompt.
+ */
+function sectionOf(prompt: string, tag: string): { inner: string; full: string } | null {
+  const open = `<${tag}>\n`
+  const close = `\n</${tag}>`
+  const start = prompt.indexOf(open)
+  if (start < 0) return null
+  const contentStart = start + open.length
+  const end = prompt.indexOf(close, contentStart)
+  if (end < 0) return null
+  return { inner: prompt.slice(contentStart, end), full: prompt.slice(start, end + close.length) }
+}
+
+/** How a system prompt splits into its context-file, skills and remaining shares. */
+export interface PromptBreakdown {
+  /** Context files (AGENTS.md and friends) inside the project_context section. */
+  files: number
+  fileCount: number
+  /** The skills section, in tokens. */
+  skills: number
+  skillCount: number
+  /** The rest of the prompt: identity, tool list, rules, docs, cwd, custom sections. */
+  prompt: number
+}
+
+/**
+ * Splits a rendered system prompt into shares, in tokens.
+ *
+ * The sections are cut out of the prompt text itself rather than rebuilt from systemPromptOptions,
+ * so extension chains and section patches are all accounted for: what is measured is the exact text
+ * the model receives.
+ */
+export function promptBreakdown(prompt: string): PromptBreakdown {
+  const files = sectionOf(prompt, 'project_context')
+  const skills = sectionOf(prompt, 'skills')
+  let rest = prompt
+  if (files !== null) rest = rest.replace(files.full, '')
+  if (skills !== null) rest = rest.replace(skills.full, '')
+  return {
+    files: tokensFromChars(files?.inner.length ?? 0),
+    fileCount: files === null ? 0 : files.inner.split('<project_instructions ').length - 1,
+    skills: tokensFromChars(skills?.inner.length ?? 0),
+    skillCount: skills === null ? 0 : skills.inner.split('<skill>').length - 1,
+    prompt: tokensFromChars(rest.length),
+  }
+}
+
+/** The shape of one entry from `pi.getAllTools()`, read structurally for tests. */
+export interface ToolLike {
+  name: string
+  description: string
+  parameters?: unknown
+  sourceInfo?: { source?: string } | null
+}
+
+/** How active tools split into built-in and everything else. */
+export interface ToolSplit {
+  /** Built-in tool schemas, in tokens. */
+  builtin: number
+  /** How many built-in tools are active. */
+  builtinCount: number
+  /** Extension-, SDK- and MCP-registered tool schemas together, in tokens. */
+  other: number
+  otherCount: number
+}
+
+/** JSON envelope keys ("name", "description", "input_schema") around each tool schema, in chars. */
+const TOOL_ENVELOPE_CHARS = 48
+
+/** Tokens one tool's schema costs on the wire: name, description and parameter JSON. */
+export function toolTokens(tool: ToolLike): number {
+  let chars = tool.name.length + tool.description.length + TOOL_ENVELOPE_CHARS
+  try {
+    chars += JSON.stringify(tool.parameters ?? {}).length
+  } catch {
+    // A circular schema still costs its name and description; count those.
+  }
+  return tokensFromChars(chars)
+}
+
+/**
+ * Splits the tools actually sent to the provider into built-in and the rest.
+ *
+ * Inactive tools cost nothing — the provider never sees them — so only names in `active` count. MCP
+ * tools arrive registered by extensions, so they land in `other` with them; pi has no deferred-tool
+ * concept that would keep a tool's schema out of the request.
+ */
+export function splitToolTokens(tools: readonly ToolLike[], active: readonly string[]): ToolSplit {
+  const wanted = new Set(active)
+  const split: ToolSplit = { builtin: 0, builtinCount: 0, other: 0, otherCount: 0 }
+  for (const tool of tools) {
+    if (!wanted.has(tool.name)) continue
+    const tokens = toolTokens(tool)
+    if (tool.sourceInfo?.source === 'builtin') {
+      split.builtin += tokens
+      split.builtinCount += 1
+    } else {
+      split.other += tokens
+      split.otherCount += 1
+    }
+  }
+  return split
+}
+
+/** The breakdown panel's figures, all in tokens and all estimates. */
+export interface BreakdownParts {
+  /** The conversation on the active branch. */
+  messages: number
+  /** Prompt anatomy from the latest capture; null until one exists. */
+  promptParts: PromptBreakdown | null
+  /** Active tools from the latest capture; null until one exists. */
+  toolSplit: ToolSplit | null
+  /** Tokens compaction keeps in reserve for the model's reply; null to hide the slot. */
+  reserve: number | null
+  /** Window minus usage minus reserve; null when the window is unknown. */
+  free: number | null
+  /** Used share of the window, 0-100; colors Free space with the meter's 70/90 thresholds. */
+  usedPercent: number | null
+  /** The context window the percentages are anchored to; percentages hide when unknown. */
+  window: number
+  /** Total used tokens — the hero figure the panel's rows explain. */
+  used: number
+}
+
+/**
+ * A quiet meter for one bucket's share of the window, in the row-1 meter's own glyphs — `█` fill on
+ * `░` track — at whole cells only: the 1/8-cell edge read as stray vertical strokes at this size.
+ * One fill color for every row; a bucket that fills the window is not thereby a warning.
+ */
+export function shareBar(
+  theme: Theme,
+  cells: number,
+  fraction: number,
+  fill: ThemeColor,
+  track: ThemeColor,
+): string {
+  const whole = Math.min(cells, Math.floor(Math.max(0, Math.min(1, fraction)) * cells))
+  return theme.fg(fill, BAR_FILL.repeat(whole)) + theme.fg(track, BAR_TRACK.repeat(cells - whole))
+}
+
+/**
+ * The breakdown panel: what occupies the context window, and what remains — a plain data grid, one
+ * row per figure, every column aligned, kinds separated by dim rules.
+ *
+ * The title is row 1's and appears nowhere else. Three groups, each a different kind of number,
+ * each behind a rule: `Used`, the provider-reported total; the estimated buckets, ending with
+ * `Unaccounted` so the books close (buckets are chars/4 estimates, Used is real, and the gap is
+ * shown rather than hidden — buckets + Unaccounted = Used, and Used + Autocompact buffer + Free
+ * space = the window); and what is kept back or still open. Free space is the remainder, not a
+ * consumer, and the closed arithmetic is what says so. Counts ride on labels as `×N`; every value
+ * is tokens; every percentage is a share of the window; and every row ends in the same muted share
+ * bar — the row-1 meter's glyphs at half size — so magnitudes compare without reading a number and
+ * without a single new visual device.
+ *
+ * Bucket names and their order follow Claude Code's panel. Ext tools is the one bucket CC has no
+ * name for: pi's non-builtin tools come from extensions, the SDK and MCP together, so "MCP tools"
+ * would mislabel most of them.
+ */
+export function breakdownPanel(theme: Theme, width: number, parts: BreakdownParts): string[] {
+  const share = (tokens: number): number =>
+    parts.window > 0 ? Math.min(1, tokens / parts.window) : 0
+  const pctOf = (tokens: number): number | null =>
+    parts.window > 0 ? (tokens / parts.window) * 100 : null
+
+  type Row = {
+    label: string
+    tokens: number
+    pct: number | null
+    labelColor?: ThemeColor
+    valueColor?: ThemeColor
+  }
+  // Destructured to zero, so the pushes below read in display order without nesting.
+  const { files, fileCount, skills, skillCount, prompt } = parts.promptParts ?? {
+    files: 0,
+    fileCount: 0,
+    skills: 0,
+    skillCount: 0,
+    prompt: 0,
+  }
+  const { builtin, builtinCount, other, otherCount } = parts.toolSplit ?? {
+    builtin: 0,
+    builtinCount: 0,
+    other: 0,
+    otherCount: 0,
+  }
+
+  const pressure = percentColor(parts.usedPercent)
+  // Group 1: the real total — the number the estimates below are measured against.
+  const total: Row[] = [
+    {
+      label: 'Used',
+      tokens: parts.used,
+      pct: parts.usedPercent,
+      labelColor: 'text',
+      valueColor: pressure,
+    },
+  ]
+  // Group 2: the estimated buckets, in the Claude Code panel's order.
+  const buckets: Row[] = [{ label: 'Messages', tokens: parts.messages, pct: pctOf(parts.messages) }]
+  if (fileCount > 0)
+    buckets.push({ label: `Memory files ×${fileCount}`, tokens: files, pct: pctOf(files) })
+  if (builtin > 0) {
+    buckets.push({
+      label: builtinCount > 0 ? `System tools ×${builtinCount}` : 'System tools',
+      tokens: builtin,
+      pct: pctOf(builtin),
+    })
+  }
+  if (otherCount > 0)
+    buckets.push({ label: `Ext tools ×${otherCount}`, tokens: other, pct: pctOf(other) })
+  if (skillCount > 0)
+    buckets.push({ label: `Skills ×${skillCount}`, tokens: skills, pct: pctOf(skills) })
+  if (prompt > 0) buckets.push({ label: 'System prompt', tokens: prompt, pct: pctOf(prompt) })
+  // The estimates miss the real total by design; showing the miss keeps the column honest.
+  const unaccounted = parts.used - (parts.messages + files + skills + prompt + builtin + other)
+  if (unaccounted > 0) {
+    buckets.push({
+      label: 'Unaccounted',
+      tokens: unaccounted,
+      pct: pctOf(unaccounted),
+      valueColor: 'dim',
+    })
+  }
+  // Group 3: what is kept back, and what remains.
+  const remaining: Row[] = []
+  if (parts.reserve !== null && parts.reserve > 0) {
+    remaining.push({
+      label: 'Autocompact buffer',
+      tokens: parts.reserve,
+      pct: pctOf(parts.reserve),
+    })
+  }
+  if (parts.free !== null) {
+    remaining.push({
+      label: 'Free space',
+      tokens: parts.free,
+      pct: pctOf(parts.free),
+      valueColor: pressure,
+    })
+  }
+
+  const groups = [total, buckets, remaining].filter((group) => group.length > 0)
+  const labelWidth = Math.max(...groups.flat().map((bucket) => bucket.label.length))
+  const barCells = 10
+  // Column plan: inset(2) · label · gap(2) · tokens(7) · gap(2) · share(6) · gap(2) · bar(10).
+  const gridWidth = labelWidth + 2 + 7 + 2 + 6 + 2 + barCells
+  const clip = (line: string): string => truncateToWidth(line, width, theme.fg('dim', '…'))
+  const rule = clip(`  ${theme.fg('dim', '─'.repeat(gridWidth))}`)
+
+  const lines: string[] = []
+  for (const group of groups) {
+    // A rule between kinds — never around them: the kinds are what the rules are for.
+    if (lines.length > 0) lines.push(rule)
+    for (const bucket of group) {
+      const label = theme.fg(bucket.labelColor ?? 'dim', bucket.label.padEnd(labelWidth + 2))
+      const tokens = theme.fg(bucket.valueColor ?? 'text', formatTokens(bucket.tokens).padStart(7))
+      const pct = (bucket.pct === null ? '—' : `${bucket.pct.toFixed(1)}%`).padStart(6)
+      const meter =
+        parts.window > 0
+          ? `  ${shareBar(theme, barCells, share(bucket.tokens), 'muted', 'dim')}`
+          : ''
+      lines.push(clip(`  ${label}${tokens}  ${theme.fg(bucket.valueColor ?? 'text', pct)}${meter}`))
+    }
+  }
+  return lines
+}
+
+/** Reads the config's `detail` flag: the concise footer unless the file asks for the panel. */
+export function detailFromConfig(text: string | null): boolean {
+  if (text === null) return false
+  let config: unknown
+  try {
+    config = JSON.parse(text)
+  } catch {
+    return false
+  }
+  return isRecord(config) && config.detail === true
+}
+
+/**
+ * The config file's text with `detail` set, or null when the file cannot be parsed — the extension
+ * has no business replacing a config it could not read with one it wrote.
+ */
+export function withDetailFlag(text: string, value: boolean): string | null {
+  let config: unknown
+  try {
+    config = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (!isRecord(config)) return null
+  return `${JSON.stringify({ ...config, detail: value }, null, 2)}\n`
 }

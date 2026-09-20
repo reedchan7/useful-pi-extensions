@@ -15,24 +15,32 @@ import { visibleWidth } from '@earendil-works/pi-tui'
 import {
   bar,
   barColor,
+  breakdownPanel,
   contextRow,
   currencyFromConfig,
+  detailFromConfig,
+  entryChars,
   formatCost,
   formatLatency,
   formatTokens,
   formatTps,
   isQuietStatus,
+  messagesTokens,
   parseCurrency,
   percentColor,
+  promptBreakdown,
   row,
   shortenPath,
+  splitToolTokens,
   avgTokPerSec,
   cachedRates,
   ratesFromPayload,
   cacheIsFresh,
   withCachedRates,
+  toolTokens,
   ttftDisplay,
   ttftMs,
+  withDetailFlag,
   USD,
 } from './render.ts'
 
@@ -376,9 +384,9 @@ describe('contextRow', () => {
   })
 
   test('gives up the tokens/window detail first', () => {
-    // Measured: the full row needs about 111 columns. Below that the detail goes and the
+    // Measured: the full row needs about 119 columns. Below that the detail goes and the
     // volumes stay, so a narrower terminal does not lose the figures this row exists for.
-    const line = contextRow(plain, 115, parts)
+    const line = contextRow(plain, 120, parts)
     expect(line).not.toContain('175k / 1.0M')
     expect(line).toContain('Input 194k')
     expect(line).toContain('Output 89k')
@@ -464,5 +472,294 @@ describe('isQuietStatus', () => {
   test('is scoped to the key, so another extension using the same words is untouched', () => {
     expect(isQuietStatus('other-extension', 'LSP Inactive')).toBe(false)
     expect(isQuietStatus('mcp', '🔌 MCP: 2 servers enabled')).toBe(false)
+  })
+})
+
+describe('entryChars and messagesTokens', () => {
+  test('counts message entries the way the model receives them', () => {
+    // 400 chars of text = 100 tokens by pi's chars/4 rule.
+    const text = 'x'.repeat(400)
+    expect(
+      entryChars({ type: 'message', message: { role: 'user', content: [{ type: 'text', text }] } }),
+    ).toBe(400)
+    expect(
+      entryChars({
+        type: 'message',
+        message: { role: 'assistant', content: [{ type: 'thinking', thinking: text }] },
+      }),
+    ).toBe(400)
+    expect(
+      entryChars({
+        type: 'message',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'toolCall', name: 'read', arguments: { path: 'x'.repeat(200) } }],
+        },
+      }),
+    ).toBeGreaterThan(200)
+  })
+
+  test('counts an image at the estimate pi itself uses, not at zero', () => {
+    expect(
+      entryChars({ type: 'message', message: { role: 'user', content: [{ type: 'image' }] } }),
+    ).toBe(4800)
+  })
+
+  test('counts compaction and branch summaries, because they are replayed into context', () => {
+    expect(entryChars({ type: 'compaction', summary: 'x'.repeat(400) })).toBe(400)
+    expect(entryChars({ type: 'branch_summary', summary: 'x'.repeat(400) })).toBe(400)
+    expect(entryChars({ type: 'custom_message', content: 'x'.repeat(400) })).toBe(400)
+  })
+
+  test('counts a system message as zero, because the prompt bucket already owns it', () => {
+    // Counting both would double the prompt — the regression this guard exists for.
+    expect(
+      entryChars({ type: 'message', message: { role: 'system', content: 'x'.repeat(400) } }),
+    ).toBe(0)
+  })
+
+  test('treats unrecognizable entries as empty, so a hand-edited session degrades, not crashes', () => {
+    expect(entryChars(null)).toBe(0)
+    expect(entryChars(42)).toBe(0)
+    expect(entryChars({ type: 'label' })).toBe(0)
+    expect(entryChars({ type: 'message' })).toBe(0)
+    expect(
+      messagesTokens([{ type: 'message', message: { role: 'user', content: 'abcd' } }, null]),
+    ).toBe(1)
+  })
+})
+
+describe('promptBreakdown', () => {
+  // A miniature of pi's real rendering: sections wrapped as `<tag>\n...\n</tag>`.
+  const prompt = [
+    'You are an expert coding assistant.',
+    '<rules>',
+    '- Be concise',
+    '</rules>',
+    '<project_context>',
+    'Project-specific instructions and guidelines:',
+    '<project_instructions path="/x/AGENTS.md">',
+    'a'.repeat(400),
+    '</project_instructions>',
+    '<project_instructions path="/y/AGENTS.md">',
+    'b'.repeat(200),
+    '</project_instructions>',
+    '</project_context>',
+    '<skills>',
+    '<available_skills>',
+    '  <skill>',
+    '    <name>seo</name>',
+    '    <description>Optimize for search</description>',
+    '  </skill>',
+    '  <skill>',
+    '    <name>tdd</name>',
+    '    <description>Test first</description>',
+    '  </skill>',
+    '</available_skills>',
+    '</skills>',
+    '<cwd>',
+    '/tmp',
+    '</cwd>',
+  ].join('\n')
+
+  test('splits the prompt into files, skills and the rest, in tokens', () => {
+    const parts = promptBreakdown(prompt)
+    // 600 chars of file content + wrappers and headers, /4: the exact wrapper overhead is
+    // irrelevant, the bucket must simply carry the bulk of those bytes.
+    expect(parts.files).toBeGreaterThan(150)
+    expect(parts.fileCount).toBe(2)
+    expect(parts.skills).toBeGreaterThan(20)
+    expect(parts.skillCount).toBe(2)
+    expect(parts.prompt).toBeGreaterThan(0)
+    // The remainder must not still contain the extracted sections.
+    expect(parts.prompt).toBeLessThan(600 / 4 + 20)
+  })
+
+  test('a prompt without those sections reports zero, not a crash', () => {
+    const parts = promptBreakdown('just a preamble')
+    expect(parts.files).toBe(0)
+    expect(parts.fileCount).toBe(0)
+    expect(parts.skills).toBe(0)
+    expect(parts.skillCount).toBe(0)
+    expect(parts.prompt).toBe(tokensFromCharsForTest('just a preamble'))
+  })
+})
+
+/** The same chars/4 rule the production code applies, spelled out for expectations. */
+function tokensFromCharsForTest(text: string): number {
+  return Math.ceil(text.length / 4)
+}
+
+/** The percentage a panel row carries, as a number — NaN when the row has none. */
+function pctOfRow(line: string | undefined): number {
+  return Number((line?.match(/(\d+\.\d)%/) ?? [])[1] ?? Number.NaN)
+}
+
+describe('toolTokens and splitToolTokens', () => {
+  const builtin = { name: 'read', description: 'd'.repeat(100), sourceInfo: { source: 'builtin' } }
+  const mcp = {
+    name: 'lark_im',
+    description: 'm'.repeat(100),
+    parameters: { type: 'object' },
+    sourceInfo: { source: 'npm:@reedchan/lark' },
+  }
+
+  test('costs a tool by its name, description and schema', () => {
+    // No parameters stringifies as "{}": two characters, still on the wire.
+    expect(toolTokens(builtin)).toBe(Math.ceil((4 + 100 + 48 + 2) / 4))
+    expect(toolTokens({ ...mcp, parameters: { x: 'y'.repeat(40) } })).toBeGreaterThan(
+      toolTokens({ ...mcp, parameters: {} }),
+    )
+  })
+
+  test('inactive tools cost nothing, because the provider never sees them', () => {
+    const split = splitToolTokens([builtin, mcp], ['read'])
+    expect(split.builtin).toBe(toolTokens(builtin))
+    expect(split.builtinCount).toBe(1)
+    expect(split.other).toBe(0)
+    expect(split.otherCount).toBe(0)
+  })
+
+  test('non-builtin sources — extension, SDK, MCP — land in the Ext bucket together', () => {
+    const split = splitToolTokens([builtin, mcp], ['read', 'lark_im'])
+    expect(split.other).toBe(toolTokens(mcp))
+    expect(split.otherCount).toBe(1)
+  })
+})
+
+describe('breakdownPanel', () => {
+  const parts = {
+    messages: 214_000,
+    promptParts: { files: 23_000, fileCount: 14, skills: 10_000, skillCount: 95, prompt: 6_500 },
+    toolSplit: { builtin: 22_000, builtinCount: 22, other: 4_400, otherCount: 12 },
+    reserve: 16_384,
+    free: 683_616,
+    usedPercent: 30,
+    window: 1_000_000,
+    used: 300_000,
+  }
+
+  test('the real total leads; rules separate the kinds, no title of its own', () => {
+    const lines = breakdownPanel(marked, 300, parts)
+    // Row 1 owns the title; repeating it here was a duplicate that could not align with the grid.
+    for (const line of lines) expect(line).not.toContain('Context window')
+    // The Used row anchors the grid, its label brighter than the dim bucket labels.
+    expect(lines[0]).toContain('<text>Used')
+    expect(lines[0]).toContain('30.0%')
+    // Rules between kinds — never around them.
+    expect(lines[1]).toContain('──────────')
+    expect(lines[9]).toContain('──────────')
+  })
+
+  test('one row per bucket, in the order of the Claude Code panel', () => {
+    const lines = breakdownPanel(plain, 300, parts)
+    expect(lines).toHaveLength(12)
+    expect(lines[0]).toContain('Used')
+    expect(lines[2]).toContain('Messages')
+    // Counts ride on the label as ×N — never as bare parentheses.
+    expect(lines[3]).toContain('Memory files ×14')
+    expect(lines[4]).toContain('System tools ×22')
+    expect(lines[5]).toContain('Ext tools ×12')
+    expect(lines[6]).toContain('Skills ×95')
+    expect(lines[7]).toContain('System prompt')
+    expect(lines[8]).toContain('Unaccounted')
+    expect(lines[10]).toContain('Autocompact buffer')
+    expect(lines[11]).toContain('Free space')
+  })
+
+  test('the books close: buckets + Unaccounted = Used, and Used + buffer + Free = window', () => {
+    const lines = breakdownPanel(plain, 300, parts)
+    // The regression this guards: estimates missed the real total and the column did not add up.
+    const buckets = [2, 3, 4, 5, 6, 7, 8].reduce((sum, index) => sum + pctOfRow(lines[index]), 0)
+    expect(Math.abs(buckets - pctOfRow(lines[0]))).toBeLessThanOrEqual(0.5)
+    const whole = pctOfRow(lines[0]) + pctOfRow(lines[10]) + pctOfRow(lines[11])
+    expect(Math.abs(whole - 100)).toBeLessThanOrEqual(0.5)
+    // Unaccounted is exactly the gap between the real total and the estimate sum.
+    const estimated = 214_000 + 23_000 + 10_000 + 6_500 + 22_000 + 4_400
+    expect(pctOfRow(lines[8])).toBeCloseTo(((300_000 - estimated) / 1_000_000) * 100, 1)
+  })
+
+  test('every bucket shows its share of the window, and a bar to compare by eye', () => {
+    const lines = breakdownPanel(plain, 300, parts)
+    expect(lines[2]).toContain('21.4%')
+    expect(lines[11]).toContain('68.4%')
+    // The bars are the row-1 meter's own glyphs — █ fill on ░ track, whole cells only: the
+    // 1/8-cell edges read as stray vertical strokes, and the hairline track read as clutter.
+    const rows = [0, 2, 3, 4, 5, 6, 7, 8, 10, 11]
+    for (const index of rows) {
+      expect(lines[index]?.slice(-10)).toMatch(/^[█░]{10}$/)
+    }
+    // One fill color for every row — no green-here-white-there.
+    const bars = breakdownPanel(marked, 300, parts)
+    for (const index of rows) {
+      expect(bars[index]).toMatch(/<muted>█*<\/muted><dim>░*<\/dim>$/)
+    }
+    // Magnitudes compare: Free space's bar outfills Messages's.
+    expect((lines[11]?.match(/█/g) ?? []).length).toBeGreaterThan(
+      (lines[2]?.match(/█/g) ?? []).length,
+    )
+  })
+
+  test('columns align: every line, rules included, renders the same visible width', () => {
+    const lines = breakdownPanel(plain, 300, parts)
+    const widths = new Set(lines.map((line) => visibleWidth(line)))
+    expect(widths.size).toBe(1)
+  })
+
+  test('omits buckets it has nothing to say about', () => {
+    const lines = breakdownPanel(plain, 300, {
+      messages: 0,
+      promptParts: null,
+      toolSplit: null,
+      reserve: null,
+      free: null,
+      usedPercent: null,
+      window: 1_000_000,
+      used: 0,
+    })
+    // Used, a rule, and Messages alone — no Unaccounted when there is no gap to explain.
+    expect(lines).toHaveLength(3)
+    expect(lines[0]).toContain('Used')
+    expect(lines[2]).toContain('Messages')
+    expect(lines[2]).toContain('0.0%')
+  })
+
+  test('keeps every row inside the terminal width, at any width', () => {
+    // The panel is ~50 columns; even a phone-sized terminal keeps all of it by truncating.
+    for (const width of [20, 30, 40, 50, 60, 120, 300]) {
+      for (const line of breakdownPanel(plain, width, parts)) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width)
+      }
+    }
+  })
+
+  test('colors Free space with the pressure thresholds of the meter', () => {
+    const calm = breakdownPanel(marked, 300, { ...parts, usedPercent: 27 })
+    expect(calm[11]).toContain('<text>')
+    const tight = breakdownPanel(marked, 300, { ...parts, usedPercent: 95 })
+    expect(tight[11]).toContain('<error>')
+  })
+})
+
+describe('detailFromConfig and withDetailFlag', () => {
+  test('the concise footer is the default, and only an explicit true opens the panel', () => {
+    expect(detailFromConfig(null)).toBe(false)
+    expect(detailFromConfig('{}')).toBe(false)
+    expect(detailFromConfig('{ not json')).toBe(false)
+    expect(detailFromConfig('{"detail":false}')).toBe(false)
+    expect(detailFromConfig('{"currency":{"code":"CNY"}}')).toBe(false)
+    expect(detailFromConfig('{"detail":true}')).toBe(true)
+  })
+
+  test('toggling writes the flag back without disturbing keys it does not own', () => {
+    const updated = withDetailFlag('{"currency":{"code":"CNY"}}', true)
+    expect(updated).toContain('"detail": true')
+    expect(updated).toContain('"code": "CNY"')
+    expect(detailFromConfig(updated)).toBe(true)
+  })
+
+  test('never returns a replacement for a file it could not parse', () => {
+    expect(withDetailFlag('{ not json', false)).toBeNull()
+    expect(withDetailFlag('"just a string"', false)).toBeNull()
   })
 })

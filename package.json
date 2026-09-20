@@ -1,7 +1,7 @@
 {
   "name": "useful-pi-extensions",
-  "version": "1.10.3",
-  "description": "A small collection of pi extensions, installed with one command — a labelled status line with context pressure, cache, cost, effort, TTFT and tokens/sec.",
+  "version": "1.11.0",
+  "description": "A small collection of pi extensions, installed with one command — a labelled status line with context pressure, cache, cost, effort, TTFT and tokens/sec, plus an opt-in context breakdown panel.",
   "keywords": [
     "bun",
     "cli",

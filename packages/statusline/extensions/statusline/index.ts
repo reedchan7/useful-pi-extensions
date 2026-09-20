@@ -31,24 +31,32 @@ import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 
 import {
   avgTokPerSec,
+  breakdownPanel,
   contextRow,
   currencyFromConfig,
+  detailFromConfig,
   formatCwd,
   formatLatency,
   formatTps,
   avgMs,
   isQuietStatus,
+  messagesTokens,
   pair,
   cachedRates,
   ratesFromPayload,
   cacheIsFresh,
   withCachedRates,
+  withDetailFlag,
+  promptBreakdown,
   row,
   shortenPath,
+  splitToolTokens,
   ttftDisplay,
   ttftMs,
   USD,
   type Currency,
+  type PromptBreakdown,
+  type ToolSplit,
 } from './render.ts'
 
 const LIVE_RENDER_MS = 200
@@ -75,6 +83,16 @@ const STATE_DIR = join(STATUSLINE_DIR, 'state')
 const LEGACY_STATE = join(homedir(), '.pi', 'agent', 'statusline-state.json')
 /** The 1.8 single-file state: one bucket every session shared, also migrated to per-session. */
 const LEGACY_SHARED_STATE = join(STATUSLINE_DIR, 'state.json')
+/** Pi's own default when settings name no reserve (DEFAULT_COMPACTION_SETTINGS). */
+const DEFAULT_RESERVE_TOKENS = 16_384
+/**
+ * The key that toggles the breakdown line; change here if another extension owns it.
+ *
+ * Ctrl+j was tried first and had to go: legacy terminals send it as a bare LF, which is
+ * indistinguishable from Enter, so it typed newlines instead of toggling. ctrl+e is unbound across
+ * pi's default keymaps and in every extension installed on this machine.
+ */
+const BREAKDOWN_SHORTCUT = 'ctrl+e'
 const FETCH_TIMEOUT_MS = 5000
 
 function today(): string {
@@ -162,6 +180,7 @@ async function pruneState(): Promise<void> {
         const filePath = join(STATE_DIR, name)
         const stats = await stat(filePath).catch(() => null)
         if (stats !== null && stats.mtimeMs < cutoff) await unlink(filePath).catch(() => {})
+        return null
       }),
     )
   } catch {
@@ -382,6 +401,71 @@ export default function (pi: ExtensionAPI) {
   // Latest turn reading: { rate, exact, ttftMs }
   let reading: { rate: number; exact: boolean; ttftMs: number | null } | null = null
 
+  // Breakdown-line inputs, refreshed once per turn rather than per frame. The prompt and the
+  // tool list change only across turns (before_agent_start re-captures both), and the message
+  // estimate only changes when the branch's leaf does, so the footer's per-frame work is
+  // string assembly over cached numbers.
+  let detailVisible = false
+  let promptParts: PromptBreakdown | null = null
+  let toolSplit: ToolSplit | null = null
+  let reserveTokens: number | null = null
+  let messagesCache: { leafId: string | null; tokens: number } | null = null
+
+  /** Re-splits the rendered system prompt into its files, skills and remaining shares. */
+  function refreshPrompt(prompt: string): void {
+    promptParts = promptBreakdown(prompt)
+  }
+
+  /** Re-costs the tools actually sent to the provider: only the active ones cost anything. */
+  function refreshTools(): void {
+    toolSplit = splitToolTokens(pi.getAllTools(), pi.getActiveTools())
+  }
+
+  /** Conversation estimate, recomputed only when the branch's leaf entry has changed. */
+  function messagesFor(ctx: ExtensionContext): number {
+    const leafId = ctx.sessionManager.getLeafId() ?? null
+    if (messagesCache === null || messagesCache.leafId !== leafId) {
+      messagesCache = { leafId, tokens: messagesTokens(ctx.sessionManager.buildContextEntries()) }
+    }
+    return messagesCache.tokens
+  }
+
+  /** Flips the breakdown line and remembers the choice in the config file. */
+  function setDetailVisible(value: boolean): void {
+    detailVisible = value
+    void (async () => {
+      try {
+        const text = await readFile(CONFIG_PATH, 'utf8').catch(() => '{}')
+        const updated = withDetailFlag(text, value)
+        if (updated !== null) {
+          await mkdir(STATUSLINE_DIR, { recursive: true })
+          await writeFile(CONFIG_PATH, updated)
+        }
+      } catch {
+        // The toggle still works this session; only its memory across sessions is lost.
+      }
+    })()
+    requestRender?.()
+  }
+
+  /** Reads pi's compaction reserve from settings; null hides the slot (compaction off). */
+  async function loadReserve(): Promise<number | null> {
+    try {
+      const config: unknown = JSON.parse(
+        await readFile(join(homedir(), '.pi', 'agent', 'settings.json'), 'utf8'),
+      )
+      // No compaction block is the normal case and means pi's defaults: enabled, reserving 16,384.
+      // Treating it as "compaction off" hid the buffer for everyone who never touched settings.
+      const compaction = isRecord(config) && isRecord(config.compaction) ? config.compaction : {}
+      if (compaction.enabled === false) return null
+      const reserve = compaction.reserveTokens
+      if (typeof reserve === 'number' && Number.isFinite(reserve) && reserve > 0) return reserve
+      return DEFAULT_RESERVE_TOKENS
+    } catch {
+      return DEFAULT_RESERVE_TOKENS
+    }
+  }
+
   let chars = 0
   let requestAt: number | null = null
   let firstTokenAt: number | null = null
@@ -514,6 +598,26 @@ export default function (pi: ExtensionAPI) {
             currency,
           )
 
+          // The breakdown panel sits directly under the meter it explains, before the identity
+          // row. The concise footer renders by default; ctrl+e or /breakdown opens the panel.
+          let breakdown: string[] | null = null
+          if (detailVisible) {
+            const window =
+              usage?.contextWindow ?? shown?.contextWindow ?? ctx.model?.contextWindow ?? 0
+            const used = shown?.tokens ?? 0
+            const free = window > 0 ? Math.max(0, window - used - (reserveTokens ?? 0)) : null
+            breakdown = breakdownPanel(theme, width, {
+              messages: messagesFor(ctx),
+              promptParts,
+              toolSplit,
+              reserve: reserveTokens,
+              free,
+              usedPercent: shown?.percent ?? null,
+              window,
+              used,
+            })
+          }
+
           // Row 2: model and the latest turn's timing on the right, path on the left. Three
           // groups — identity, first token, throughput — separated by a wall instead of another
           // dot, because a run of similar-looking pairs is what made the old footer unreadable.
@@ -567,7 +671,10 @@ export default function (pi: ExtensionAPI) {
           }
           const row2Left = pwdPlain ? theme.fg('muted', pwdPlain) : ''
 
-          const lines = [row1, row(theme, width, row2Left, row2Right)]
+          const lines =
+            breakdown === null
+              ? [row1, row(theme, width, row2Left, row2Right)]
+              : [row1, ...breakdown, row(theme, width, row2Left, row2Right)]
 
           // Other extensions' status entries still belong on screen, minus the
           // ones that only report that nothing is happening.
@@ -601,6 +708,15 @@ export default function (pi: ExtensionAPI) {
     stopTicker()
   })
 
+  // The prompt and the tool list are inputs to the breakdown line, and both are settled by the
+  // time this fires: earlier handlers have chained their changes, so what is captured here is
+  // what this turn actually sends. A later handler can still mutate it, which would only make
+  // the buckets estimates of an estimate — the same honesty the panel already carries.
+  pi.on('before_agent_start', async (event) => {
+    refreshPrompt(event.systemPrompt)
+    refreshTools()
+  })
+
   pi.on('session_start', async (_event, ctx) => {
     ratio = seedRatio(ctx)
     reading = null
@@ -618,6 +734,20 @@ export default function (pi: ExtensionAPI) {
     const file = ctx.sessionManager.getSessionFile()
     await restore(file ?? null)
     todayBase = await sumOtherTodaysCost(file ?? null, startOfToday())
+
+    // Breakdown inputs. The prompt is read once so the line exists before the first turn;
+    // from there before_agent_start keeps it current.
+    refreshPrompt(ctx.getSystemPrompt())
+    refreshTools()
+    reserveTokens = await loadReserve()
+    detailVisible = await (async () => {
+      try {
+        return detailFromConfig(await readFile(CONFIG_PATH, 'utf8'))
+      } catch {
+        return false
+      }
+    })()
+
     installFooter(ctx)
   })
 
@@ -715,5 +845,22 @@ export default function (pi: ExtensionAPI) {
     // a stale anchor would let the live branch count against nothing until the next turn.
     requestAt = null
     resetStream()
+  })
+
+  // The breakdown panel is opt-in: the concise footer stays the default. Both toggles remember
+  // the choice in the config file. ctrl+e is unbound across pi's default keymaps and in every
+  // extension installed on this machine; if another extension owns it here, BREAKDOWN_SHORTCUT
+  // is the one place to move it.
+  pi.registerShortcut(BREAKDOWN_SHORTCUT, {
+    description: 'Toggle the context breakdown panel in the status line',
+    handler: () => {
+      setDetailVisible(!detailVisible)
+    },
+  })
+  pi.registerCommand('breakdown', {
+    description: 'Toggle the context breakdown panel in the status line',
+    handler: async () => {
+      setDetailVisible(!detailVisible)
+    },
   })
 }
