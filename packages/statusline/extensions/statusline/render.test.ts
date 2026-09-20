@@ -453,8 +453,9 @@ describe('isQuietStatus', () => {
     expect(isQuietStatus('pi-lens-lsp', 'lsp inactive')).toBe(true)
   })
 
-  test('keeps the informative state', () => {
-    expect(isQuietStatus('pi-lens-lsp', 'LSP Active: typescript')).toBe(false)
+  test('quiets every LSP health line — active and failed are noise once diagnostics work', () => {
+    expect(isQuietStatus('pi-lens-lsp', 'LSP Active: json, ast-grep, typos')).toBe(true)
+    expect(isQuietStatus('pi-lens-lsp', 'LSP Failed: opengrep')).toBe(true)
   })
 
   test('is scoped to the key, so another extension using the same words is untouched', () => {

@@ -41,7 +41,9 @@ export const ANSI = /\u001b\[[0-9;]*m/g
  * an unrelated extension that happens to use the same words is left alone.
  */
 export const QUIET_STATUS: ReadonlyArray<readonly [string, RegExp]> = [
-  ['pi-lens-lsp', /^LSP Inactive$/i],
+  // pi-lens reports language-server health here. Useful when diagnostics break; permanent
+  // noise once they work, so the whole LSP line stays out of the footer.
+  ['pi-lens-lsp', /^LSP/i],
 ]
 
 export function formatTokens(count: number): string {

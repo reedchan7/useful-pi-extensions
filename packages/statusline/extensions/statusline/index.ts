@@ -521,33 +521,28 @@ export default function (pi: ExtensionAPI) {
           const separator = theme.fg('dim', '  ·  ')
           const wall = theme.fg('dim', '  |  ')
           const identity = [theme.fg('accent', model)]
-          if (ctx.thinkingLevel) identity.push(pair(theme, 'Effort', ctx.thinkingLevel, 'muted'))
+          if (ctx.thinkingLevel) identity.push(pair(theme, 'Effort', ctx.thinkingLevel))
 
           const ttft: string[] = []
           const waiting = ttftDisplay(requestAt, firstTokenAt, Date.now())
           if (waiting !== null) {
             // The clock is running: this wait has no reading yet, so the previous turn's
             // numbers would only be mistaken for the current one.
-            ttft.push(pair(theme, 'TTFT', waiting.text, 'muted'))
+            ttft.push(pair(theme, 'TTFT', waiting.text))
           } else if (reading) {
             if (reading.ttftMs !== null)
-              ttft.push(pair(theme, 'TTFT', formatLatency(reading.ttftMs), 'muted'))
+              ttft.push(pair(theme, 'TTFT', formatLatency(reading.ttftMs)))
           }
           const avgTtft = avgMs(totalTtftMs, ttftCount)
-          if (avgTtft !== null) ttft.push(pair(theme, 'Avg TTFT', formatLatency(avgTtft), 'muted'))
+          if (avgTtft !== null) ttft.push(pair(theme, 'Avg TTFT', formatLatency(avgTtft)))
 
           const throughput: string[] = []
           if (reading) {
             throughput.push(
-              pair(
-                theme,
-                'Last',
-                `${reading.exact ? '' : '~'}${formatTps(reading.rate)} tok/s`,
-                reading.exact ? 'success' : 'dim',
-              ),
+              pair(theme, 'Last', `${reading.exact ? '' : '~'}${formatTps(reading.rate)} tok/s`),
             )
           }
-          if (avg !== null) throughput.push(pair(theme, 'Avg', `${formatTps(avg)} tok/s`, 'muted'))
+          if (avg !== null) throughput.push(pair(theme, 'Avg', `${formatTps(avg)} tok/s`))
 
           const row2Right = [identity, ttft, throughput]
             .filter((group) => group.length > 0)
