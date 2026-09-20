@@ -85,6 +85,29 @@ export function ttftMs(requestAt: number | null, firstTokenAt: number | null): n
   return firstTokenAt > requestAt ? firstTokenAt - requestAt : null
 }
 
+/**
+ * The frozen Last throughput for a finished message: its whole-message rate, output tokens over the
+ * entire decode window.
+ *
+ * A decode window below the sample floor is a burst arrival — the whole message landed in one or
+ * two chunks, so there is no decode phase to measure. Dividing by those couple of milliseconds once
+ * printed `Last 82000 tok/s` for an 82-token greeting; like the negative TTFT above, an
+ * unmeasurable rate reports absence rather than a confident fake.
+ *
+ * @param decodeMs - Milliseconds from the first streamed delta to message end.
+ * @param tokens - Output tokens for the message (provider-reported when available).
+ * @param minSampleMs - The shortest window considered a real decode phase.
+ * @returns The tokens/second rate, or null when the window is too short to measure.
+ */
+export function frozenThroughput(
+  decodeMs: number,
+  tokens: number,
+  minSampleMs: number,
+): number | null {
+  if (decodeMs < minSampleMs) return null
+  return (tokens / decodeMs) * 1000
+}
+
 /** What the TTFT slot renders, and whether the clock is still running. */
 export interface TtftDisplay {
   text: string
@@ -419,12 +442,13 @@ export interface ContextRowParts {
  * Row 1: context pressure on the left, session totals on the right.
  *
  * Space is given up in a fixed order rather than all at once, because this row carries numbers that
- * appear nowhere else in the footer. A narrower terminal should cost the least load-bearing of them
- * visibly rather than silently dropping the whole group:
+ * appear nowhere else in the footer. A narrower terminal costs, in turn:
  *
  * 1. The absolute `tokens / window` detail,
- * 2. The input/output volumes, which are informative but not cumulative bills,
- * 3. The right group entirely (`row` then keeps the left alone).
+ * 2. The input/output volumes, which are informative but not bills,
+ * 3. The cache-hit rate, which is diagnostic rather than money,
+ * 4. Today's running total (the session's own bill outlives it),
+ * 5. The bar's own cells, down to a stub — the percent survives everything.
  *
  * @param currency - Used for the cost; defaults to USD so the row renders without a config file.
  */
@@ -441,7 +465,9 @@ export function contextRow(
     parts.percent === null ? '--' : `${Math.round(parts.percent)}%`,
   )
   // The title is Claude Code's: "Context window", so the two panels read the same at a glance.
-  const meter = `${theme.fg('dim', 'Context window')}  ${bar(theme, BAR_CELLS, fraction)}  ${percent}`
+  const meterWith = (cells: number): string =>
+    `${theme.fg('dim', 'Context window')}  ${bar(theme, cells, fraction)}  ${percent}`
+  const meter = meterWith(BAR_CELLS)
   const detail =
     parts.window > 0 ? `${formatTokens(parts.tokens)} / ${formatTokens(parts.window)}` : ''
   const withDetail = detail === '' ? meter : `${meter}   ${theme.fg('dim', detail)}`
@@ -475,9 +501,97 @@ export function contextRow(
   const fits = (left: string, right: string): boolean =>
     right === '' || visibleWidth(left) + 2 + visibleWidth(right) <= width
 
-  if (fits(withDetail, full)) return row(theme, width, withDetail, full)
-  if (fits(meter, full)) return row(theme, width, meter, full)
-  return row(theme, width, meter, core)
+  const moneyOnly = money.join(separator)
+  // The session's own bill outlives today's running total.
+  const ownBill = money.length > 0 ? (money[0] ?? '') : ''
+
+  // The ladder, highest fidelity first: the detail, the volumes, the cache diagnostics and
+  // today's total each give up their seat before the bar itself shrinks — twenty cells of bar
+  // are a luxury the bills should not have to pay for.
+  const compact = 10
+  const rungs: Array<{ left: string; right: string }> = [
+    { left: withDetail, right: full },
+    { left: meter, right: full },
+    { left: meter, right: core },
+    { left: meter, right: moneyOnly },
+    { left: meterWith(compact), right: moneyOnly },
+    { left: meterWith(compact), right: ownBill },
+  ]
+  for (const { left, right } of rungs) {
+    if (right === '' ? visibleWidth(left) <= width : fits(left, right)) {
+      return row(theme, width, left, right)
+    }
+  }
+
+  // Floor: the percent is the one number this row exists to show — the bar shrinks to a stub
+  // before the percent is ever truncated, and past that the label goes, never the number.
+  const stub = Math.min(compact, width - 22)
+  if (stub >= 4) return row(theme, width, meterWith(stub), '')
+  if (width >= 18) {
+    return row(theme, width, `${theme.fg('dim', 'Context window')}  ${percent}`, '')
+  }
+  return truncateToWidth(percent, width, theme.fg('dim', '…'))
+}
+
+/** The row-2 right side, the caller pre-formatting each slot's display text. */
+export interface TimingRowParts {
+  model: string
+  /** Thinking level label, or null to hide the slot. */
+  effort: string | null
+  /** The live TTFT clock or the frozen reading, or null to hide the slot. */
+  ttft: string | null
+  /** Session-average TTFT, or null to hide the slot. */
+  avgTtft: string | null
+  /** Last turn's decode rate, or null to hide the slot. */
+  last: string | null
+  /** Session-average decode rate, or null to hide the slot. */
+  avg: string | null
+}
+
+/**
+ * Row 2's right side: the model, the effort level, and the latest turn's timing.
+ *
+ * Like row 1, space is given up in a fixed order rather than half rendered. A narrower terminal
+ * costs, in turn: the throughput average, the TTFT average, the effort level, the last rate —
+ * aggregates before live numbers, static config before measured history. The model and the TTFT
+ * clock are the floor; past them the line truncates, because a model id is the one string here with
+ * no drop-in substitute.
+ *
+ * @returns The assembled right side, at most `width` cells wide.
+ */
+export function timingRow(theme: Theme, width: number, parts: TimingRowParts): string {
+  const separator = theme.fg('dim', '  ·  ')
+  const wall = theme.fg('dim', '  |  ')
+  const slots = {
+    model: theme.fg('accent', parts.model),
+    effort: parts.effort !== null ? pair(theme, 'Effort', parts.effort) : null,
+    ttft: parts.ttft !== null ? pair(theme, 'TTFT', parts.ttft) : null,
+    avgTtft: parts.avgTtft !== null ? pair(theme, 'Avg TTFT', parts.avgTtft) : null,
+    last: parts.last !== null ? pair(theme, 'Last', parts.last) : null,
+    avg: parts.avg !== null ? pair(theme, 'Avg', parts.avg) : null,
+  }
+
+  type Droppable = 'effort' | 'ttft' | 'avgTtft' | 'last' | 'avg'
+  const hidden = new Set<Droppable>()
+  const assemble = (): string =>
+    [
+      [slots.model, hidden.has('effort') ? null : slots.effort],
+      [hidden.has('ttft') ? null : slots.ttft, hidden.has('avgTtft') ? null : slots.avgTtft],
+      [hidden.has('last') ? null : slots.last, hidden.has('avg') ? null : slots.avg],
+    ]
+      .map((group) => group.filter((slot): slot is string => slot !== null))
+      .filter((group) => group.length > 0)
+      .map((group) => group.join(separator))
+      .join(wall)
+
+  const ladder: Droppable[] = ['avg', 'avgTtft', 'effort', 'last']
+  let right = assemble()
+  for (const key of ladder) {
+    if (visibleWidth(right) <= width) break
+    hidden.add(key)
+    right = assemble()
+  }
+  return truncateToWidth(right, width, theme.fg('dim', '…'))
 }
 
 /** `label value` where the key is quiet and the value is not. */

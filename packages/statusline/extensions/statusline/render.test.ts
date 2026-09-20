@@ -24,6 +24,7 @@ import {
   formatLatency,
   formatTokens,
   formatTps,
+  frozenThroughput,
   isQuietStatus,
   messagesTokens,
   parseCurrency,
@@ -32,6 +33,7 @@ import {
   row,
   shortenPath,
   splitToolTokens,
+  timingRow,
   avgTokPerSec,
   cachedRates,
   ratesFromPayload,
@@ -258,6 +260,23 @@ describe('ttftMs', () => {
   })
 })
 
+describe('frozenThroughput', () => {
+  test('is the whole-message rate over a real decode window', () => {
+    expect(frozenThroughput(1000, 82, 200)).toBe(82)
+  })
+
+  test('is null, not output-per-millisecond fiction, for a burst arrival', () => {
+    // A short greeting delivered in one burst measured a 1ms decode window and once froze the
+    // footer at `Last 82000 tok/s`. There was no decode phase; there is no rate.
+    expect(frozenThroughput(1, 82, 200)).toBeNull()
+    expect(frozenThroughput(199, 82, 200)).toBeNull()
+  })
+
+  test('the sample floor itself counts as a decode phase', () => {
+    expect(frozenThroughput(200, 100, 200)).toBe(500)
+  })
+})
+
 describe('ttftDisplay', () => {
   test('counts up while the request is in flight, marked as unfinished', () => {
     expect(ttftDisplay(1000, null, 1000)).toEqual({ text: '~0ms', live: true })
@@ -378,7 +397,7 @@ describe('contextRow', () => {
   })
 
   test('never exceeds the terminal width, at any width', () => {
-    for (const width of [40, 60, 70, 80, 95, 110, 120, 150, 200]) {
+    for (const width of [24, 30, 40, 60, 70, 80, 95, 110, 120, 150, 200]) {
       expect(visibleWidth(contextRow(plain, width, parts))).toBeLessThanOrEqual(width)
     }
   })
@@ -401,12 +420,43 @@ describe('contextRow', () => {
     expect(line).toContain('Cost $1.61')
   })
 
-  test('keeps the meter alone when nothing else fits', () => {
+  test('keeps the bills through the width where the volumes just fell off', () => {
+    // The old ladder stopped here: below ~87 columns the whole right group vanished and the
+    // footer showed nothing but the meter. The cache rate goes now; the money stays.
+    const line = contextRow(plain, 80, parts)
+    expect(line).toContain('Cost $1.61')
+    expect(line).toContain('Today $4.36')
+    expect(line).not.toContain('Cache hit')
+  })
+
+  test('shrinks the bar before it drops the bill', () => {
     const line = contextRow(plain, 60, parts)
-    expect(line).toContain('Context')
+    expect(line).toContain('18%')
+    expect(line).toContain('Cost $1.61')
+    expect(line).toContain('Today $4.36')
+    expect(line).not.toContain('Cache hit')
+    expect(line).not.toContain('Input')
+  })
+
+  test("today's total goes before the session's own bill", () => {
+    const line = contextRow(plain, 50, parts)
+    expect(line).toContain('Cost $1.61')
+    expect(line).not.toContain('Today $4.36')
+    expect(line).not.toContain('Cache hit')
+  })
+
+  test('the bar gives up cells before the percent is ever lost', () => {
+    const line = contextRow(plain, 26, parts)
     expect(line).toContain('18%')
     expect(line).not.toContain('Cost')
-    expect(line).not.toContain('Cache hit')
+    expect(visibleWidth(line)).toBeLessThanOrEqual(26)
+  })
+
+  test('past the bar, the label goes — never the number', () => {
+    const line = contextRow(plain, 16, parts)
+    expect(line).toContain('18%')
+    expect(line).not.toContain('Context window')
+    expect(visibleWidth(line)).toBeLessThanOrEqual(16)
   })
 
   test('reports an unknown window instead of inventing one', () => {
@@ -433,6 +483,61 @@ describe('contextRow', () => {
     expect(line).not.toContain('Input')
     expect(line).not.toContain('Cache hit')
     expect(line).not.toContain('Cost')
+  })
+})
+
+describe('timingRow', () => {
+  // 96 cells wide when every slot shows: 29 identity + 5 wall + 27 timing + 5 wall + 30 throughput.
+  const full = {
+    model: 'glm-5.3-flash',
+    effort: 'high',
+    ttft: '1.1s',
+    avgTtft: '0.9s',
+    last: '82 tok/s',
+    avg: '61 tok/s',
+  }
+
+  test('wide enough: identity, timing and throughput groups behind walls', () => {
+    expect(timingRow(plain, 120, full)).toBe(
+      'glm-5.3-flash  ·  Effort high  |  TTFT 1.1s  ·  Avg TTFT 0.9s  |  Last 82 tok/s  ·  Avg 61 tok/s',
+    )
+  })
+
+  test('the aggregates give up their seats first, whole slots never halves', () => {
+    // 90 cells fits the line minus the throughput average; the screenshot's `Avg T…` mid-label
+    // cut is what the ladder exists to prevent.
+    expect(timingRow(plain, 90, full)).toBe(
+      'glm-5.3-flash  ·  Effort high  |  TTFT 1.1s  ·  Avg TTFT 0.9s  |  Last 82 tok/s',
+    )
+  })
+
+  test('then the effort level, static config before measured history', () => {
+    expect(timingRow(plain, 60, full)).toBe('glm-5.3-flash  |  TTFT 1.1s  |  Last 82 tok/s')
+  })
+
+  test('the model and the TTFT clock are the floor', () => {
+    expect(timingRow(plain, 30, full)).toBe('glm-5.3-flash  |  TTFT 1.1s')
+  })
+
+  test('past the floor the line truncates whole — a model id has no drop-in substitute', () => {
+    const line = timingRow(plain, 20, full)
+    expect(visibleWidth(line)).toBeLessThanOrEqual(20)
+    // The model floor survives intact; the ellipsis marks what a wider window would show.
+    expect(line.startsWith('glm-5.3-flash')).toBe(true)
+    expect(line).toContain('…')
+  })
+
+  test('null slots vanish with their walls', () => {
+    expect(
+      timingRow(plain, 50, {
+        model: 'glm-5.3-flash',
+        effort: null,
+        ttft: null,
+        avgTtft: null,
+        last: null,
+        avg: null,
+      }),
+    ).toBe('glm-5.3-flash')
   })
 })
 

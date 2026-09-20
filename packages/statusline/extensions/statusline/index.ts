@@ -38,10 +38,10 @@ import {
   formatCwd,
   formatLatency,
   formatTps,
+  frozenThroughput,
   avgMs,
   isQuietStatus,
   messagesTokens,
-  pair,
   cachedRates,
   ratesFromPayload,
   cacheIsFresh,
@@ -51,6 +51,7 @@ import {
   row,
   shortenPath,
   splitToolTokens,
+  timingRow,
   ttftDisplay,
   ttftMs,
   USD,
@@ -400,8 +401,9 @@ export default function (pi: ExtensionAPI) {
   let requestRender: (() => void) | null = null
   let currency: Currency = USD
 
-  // Latest turn reading: { rate, exact, ttftMs }
-  let reading: { rate: number; exact: boolean; ttftMs: number | null } | null = null
+  // Latest turn reading: { rate, exact, ttftMs }. rate is null when the message arrived as one
+  // burst: the honest TTFT stays, the unmeasurable throughput goes.
+  let reading: { rate: number | null; exact: boolean; ttftMs: number | null } | null = null
 
   // Breakdown-line inputs, refreshed once per turn rather than per frame. The prompt and the
   // tool list change only across turns (before_agent_start re-captures both), and the message
@@ -495,7 +497,7 @@ export default function (pi: ExtensionAPI) {
     renderedAt = 0
   }
 
-  function publish(rate: number, exact: boolean, ttft: number | null): void {
+  function publish(rate: number | null, exact: boolean, ttft: number | null): void {
     reading = { rate, exact, ttftMs: ttft }
     requestRender?.()
   }
@@ -555,9 +557,9 @@ export default function (pi: ExtensionAPI) {
     totalMeasuredOutput = num(state.totalMeasuredOutput)
     totalTtftMs = num(state.totalTtftMs)
     ttftCount = num(state.ttftCount)
-    if (isRecord(state.last) && typeof state.last.rate === 'number') {
+    if (isRecord(state.last)) {
       reading = {
-        rate: state.last.rate,
+        rate: typeof state.last.rate === 'number' ? state.last.rate : null,
         exact: state.last.exact === true,
         ttftMs: typeof state.last.ttftMs === 'number' ? state.last.ttftMs : null,
       }
@@ -620,40 +622,30 @@ export default function (pi: ExtensionAPI) {
             })
           }
 
-          // Row 2: model and the latest turn's timing on the right, path on the left. Three
-          // groups — identity, first token, throughput — separated by a wall instead of another
-          // dot, because a run of similar-looking pairs is what made the old footer unreadable.
-          const model = ctx.model?.id ?? 'no model'
-          const separator = theme.fg('dim', '  ·  ')
-          const wall = theme.fg('dim', '  |  ')
-          const identity = [theme.fg('accent', model)]
-          if (ctx.thinkingLevel) identity.push(pair(theme, 'Effort', ctx.thinkingLevel))
-
-          const ttft: string[] = []
+          // Row 2: model and the latest turn's timing on the right, path on the left. The right
+          // side assembles through timingRow's drop ladder, so a narrow terminal loses whole
+          // slots — never a half-rendered one.
           const waiting = ttftDisplay(requestAt, firstTokenAt, Date.now())
-          if (waiting !== null) {
-            // The clock is running: this wait has no reading yet, so the previous turn's
-            // numbers would only be mistaken for the current one.
-            ttft.push(pair(theme, 'TTFT', waiting.text))
-          } else if (reading) {
-            if (reading.ttftMs !== null)
-              ttft.push(pair(theme, 'TTFT', formatLatency(reading.ttftMs)))
-          }
+          // The clock is running: this wait has no reading yet, so the previous turn's numbers
+          // would only be mistaken for the current one.
+          const ttft =
+            waiting !== null
+              ? waiting.text
+              : reading && reading.ttftMs !== null
+                ? formatLatency(reading.ttftMs)
+                : null
           const avgTtft = avgMs(totalTtftMs, ttftCount)
-          if (avgTtft !== null) ttft.push(pair(theme, 'Avg TTFT', formatLatency(avgTtft)))
-
-          const throughput: string[] = []
-          if (reading) {
-            throughput.push(
-              pair(theme, 'Last', `${reading.exact ? '' : '~'}${formatTps(reading.rate)} tok/s`),
-            )
-          }
-          if (avg !== null) throughput.push(pair(theme, 'Avg', `${formatTps(avg)} tok/s`))
-
-          const row2Right = [identity, ttft, throughput]
-            .filter((group) => group.length > 0)
-            .map((group) => group.join(separator))
-            .join(wall)
+          const row2Right = timingRow(theme, width, {
+            model: ctx.model?.id ?? 'no model',
+            effort: ctx.thinkingLevel ?? null,
+            ttft,
+            avgTtft: avgTtft !== null ? formatLatency(avgTtft) : null,
+            last:
+              reading && reading.rate !== null
+                ? `${reading.exact ? '' : '~'}${formatTps(reading.rate)} tok/s`
+                : null,
+            avg: avg !== null ? `${formatTps(avg)} tok/s` : null,
+          })
           const branch = footerData.getGitBranch()
           const path = formatCwd(ctx.cwd)
           const branchSuffix = branch ? ` (${branch})` : ''
@@ -828,7 +820,8 @@ export default function (pi: ExtensionAPI) {
     const decodeMs = firstTokenAt !== null ? Date.now() - firstTokenAt : 0
     const measured = ttftMs(requestAt, firstTokenAt)
     const tokens = output > 0 ? output : totalChars * (ratio ?? FALLBACK_TOKENS_PER_CHAR)
-    if (measured !== null && decodeMs >= MIN_SAMPLE_MS) {
+    const rate = frozenThroughput(decodeMs, tokens, MIN_SAMPLE_MS)
+    if (measured !== null && rate !== null) {
       // The average's numerator and denominator must cover the same messages: totals.output spans
       // the whole session (a reload replays none of it), so pairing it with the partial denominator
       // below once produced an Avg of 4324 tok/s.
@@ -837,11 +830,14 @@ export default function (pi: ExtensionAPI) {
       totalTtftMs += measured
       ttftCount += 1
       persist(ctx.sessionManager.getSessionFile() ?? null)
-      publish((tokens / decodeMs) * 1000, output > 0, measured)
-    } else if (measured !== null && decodeMs > 0) {
-      // The frozen Last must be this message's whole-message rate, never the last live
-      // sliding-window sample: a buffered burst of chunks mid-stream reads triple.
-      publish((tokens / decodeMs) * 1000, output > 0, measured)
+      publish(rate, output > 0, measured)
+    } else if (measured !== null) {
+      // A sub-floor window is a burst arrival: the message landed in one or two chunks and there
+      // is no decode phase to measure — dividing by those milliseconds once printed Last 82000
+      // tok/s. Keep the honest TTFT, publish no rate; the live sliding-window sample is no
+      // fallback either, a buffered burst mid-stream reads triple there too.
+      publish(null, false, measured)
+      persist(ctx.sessionManager.getSessionFile() ?? null)
     }
     // Null it with the stream: a request that has produced its message is no longer in flight, and
     // a stale anchor would let the live branch count against nothing until the next turn.
