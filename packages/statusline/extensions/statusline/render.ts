@@ -397,6 +397,8 @@ export interface ContextRowParts {
   output: number
   cacheHitRate: number | null
   cost: number
+  /** Today's spend across every session on this machine, or 0 to hide the slot. */
+  todayCost: number
 }
 
 /**
@@ -421,7 +423,8 @@ export function contextRow(
   const fraction = parts.percent === null ? 0 : parts.percent / 100
   const percent = theme.fg(
     percentColor(parts.percent),
-    parts.percent === null ? '?' : `${parts.percent.toFixed(1)}%`,
+    // Whole percents: the meter carries the precision, and a decimal here is noise.
+    parts.percent === null ? '?' : `${Math.round(parts.percent)}%`,
   )
   const meter = `${theme.fg('dim', 'Context')}  ${bar(theme, BAR_CELLS, fraction)}  ${percent}`
   const detail =
@@ -437,6 +440,9 @@ export function contextRow(
     outcomes.push(pair(theme, 'Cache hit', `${parts.cacheHitRate.toFixed(1)}%`))
   }
   if (parts.cost > 0) outcomes.push(pair(theme, 'Cost', formatCost(parts.cost, currency)))
+  if (parts.todayCost > 0) {
+    outcomes.push(pair(theme, 'Today', formatCost(parts.todayCost, currency)))
+  }
 
   const separator = theme.fg('dim', '  ·  ')
   const full = [...volumes, ...outcomes].join(separator)

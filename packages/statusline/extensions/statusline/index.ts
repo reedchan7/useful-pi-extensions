@@ -18,7 +18,8 @@
  * stepStartTime; decodeMs = completedTime - firstTokenTime; tok/s = usage.output / (decodeMs / 1000)
  */
 
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, readdir, writeFile } from 'node:fs/promises'
+import { stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -62,6 +63,8 @@ const FALLBACK_TOKENS_PER_CHAR = 0.25
 const CONFIG_PATH = join(homedir(), '.pi', 'agent', 'statusline.json')
 /** Free, keyless, and one request returns every currency — so the cache serves instant switching. */
 const RATES_URL = 'https://open.er-api.com/v6/latest/USD'
+/** Every session on this machine, for the day-cost total that spans projects and models. */
+const SESSIONS_DIR = join(homedir(), '.pi', 'agent', 'sessions')
 const FETCH_TIMEOUT_MS = 5000
 
 function today(): string {
@@ -97,6 +100,78 @@ async function fetchRates(): Promise<Record<string, number> | null> {
  * Called once per session on purpose: a footer that stat'ed a file on every frame would be its own
  * bug. Editing the file therefore takes effect on `/reload`.
  */
+function startOfToday(): number {
+  const start = new Date()
+  start.setHours(0, 0, 0, 0)
+  return start.getTime()
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Today's provider cost of one session-file line, or null when the line bills nothing today. */
+function entryCost(line: string, since: number): number | null {
+  if (!line.includes('"usage"')) return null
+  let entry: unknown
+  try {
+    entry = JSON.parse(line)
+  } catch {
+    return null
+  }
+  if (!isRecord(entry) || typeof entry.timestamp !== 'string') return null
+  if (Date.parse(entry.timestamp) < since) return null
+  if (!isRecord(entry.usage) || !isRecord(entry.usage.cost)) return null
+  const total = entry.usage.cost.total
+  return typeof total === 'number' && Number.isFinite(total) ? total : null
+}
+
+/**
+ * Today's cost across every other session on this machine.
+ *
+ * Files not touched today are skipped unread, and this session's own file is skipped because its
+ * cost is already live in totals.cost — counting both would double a resumed session.
+ */
+async function sumOtherTodaysCost(currentFile: string | null, since: number): Promise<number> {
+  let dirs: string[] = []
+  try {
+    dirs = await readdir(SESSIONS_DIR)
+  } catch {
+    return 0
+  }
+  const lists = await Promise.all(
+    dirs.map(async (dir) => {
+      const dirPath = join(SESSIONS_DIR, dir)
+      let names: string[] = []
+      try {
+        names = await readdir(dirPath)
+      } catch {
+        return []
+      }
+      return names
+        .map((name) => join(dirPath, name))
+        .filter((path) => path.endsWith('.jsonl') && path !== currentFile)
+    }),
+  )
+  const costs = await Promise.all(
+    lists.flat().map(async (path) => {
+      try {
+        if ((await stat(path)).mtimeMs < since) return 0
+      } catch {
+        return 0
+      }
+      const text = await readFile(path, 'utf8').catch(() => '')
+      let total = 0
+      for (const line of text.split('\n')) {
+        const cost = entryCost(line, since)
+        if (cost !== null) total += cost
+      }
+      return total
+    }),
+  )
+  return costs.reduce((sum, value) => sum + value, 0)
+}
+
 async function loadCurrency(notify: (message: string) => void): Promise<Currency> {
   let text: string | null = null
   try {
@@ -167,6 +242,7 @@ interface Totals {
   cacheWrite: number
   cost: number
   cacheHitRate: number | null
+  todayCost: number
 }
 
 /** The usage fields this footer totals, read structurally so no cast is needed. */
@@ -178,7 +254,7 @@ type UsageTotals = {
   cost: { total: number }
 }
 
-function collectTotals(ctx: ExtensionContext): Totals {
+function collectTotals(ctx: ExtensionContext, since: number): Totals {
   const totals: Totals = {
     input: 0,
     output: 0,
@@ -186,29 +262,38 @@ function collectTotals(ctx: ExtensionContext): Totals {
     cacheWrite: 0,
     cost: 0,
     cacheHitRate: null,
+    todayCost: 0,
   }
   // `usage` stays optional here even though an assistant message always carries it:
   // a truncated or hand-edited session file is the case this guard is for.
-  const add = (usage: UsageTotals | undefined, assistant: boolean): void => {
+  const add = (usage: UsageTotals | undefined, assistant: boolean, isToday: boolean): void => {
     if (!usage) return
     totals.input += usage.input
     totals.output += usage.output
     totals.cacheRead += usage.cacheRead
     totals.cacheWrite += usage.cacheWrite
     totals.cost += usage.cost.total
+    if (isToday) totals.todayCost += usage.cost.total
     if (!assistant) return
     const prompt = usage.input + usage.cacheRead + usage.cacheWrite
     if (prompt > 0) totals.cacheHitRate = (usage.cacheRead / prompt) * 100
   }
   for (const entry of ctx.sessionManager.getEntries()) {
+    const stamp =
+      'timestamp' in entry && typeof entry.timestamp === 'string'
+        ? Date.parse(entry.timestamp)
+        : Number.NaN
+    const isToday = Number.isFinite(stamp) && stamp >= since
     if (entry.type === 'message') {
       const { message } = entry
-      if (message.role === 'assistant') add(message.usage, true)
-      else if (message.role === 'toolResult') add(message.usage, false)
+      if (message.role === 'assistant') add(message.usage, true, isToday)
+      else if (message.role === 'toolResult') add(message.usage, false, isToday)
       continue
     }
     // Compaction and branch summaries bill a model call of their own.
-    if (entry.type === 'compaction' || entry.type === 'branch_summary') add(entry.usage, false)
+    if (entry.type === 'compaction' || entry.type === 'branch_summary') {
+      add(entry.usage, false, isToday)
+    }
   }
   return totals
 }
@@ -240,6 +325,8 @@ export default function (pi: ExtensionAPI) {
   let requestAt: number | null = null
   let firstTokenAt: number | null = null
   let totalDecodeMs = 0
+  let totalMeasuredOutput = 0
+  let todayBase = 0
   let ticker: ReturnType<typeof setInterval> | null = null
   let windowAt = 0
   let windowTokens = 0
@@ -289,8 +376,8 @@ export default function (pi: ExtensionAPI) {
         },
         render(width: number): string[] {
           const usage = ctx.getContextUsage()
-          const totals = collectTotals(ctx)
-          const avg = avgTokPerSec(totals.output, totalDecodeMs)
+          const totals = collectTotals(ctx, startOfToday())
+          const avg = avgTokPerSec(totalMeasuredOutput, totalDecodeMs)
           const row1 = contextRow(
             theme,
             width,
@@ -302,6 +389,7 @@ export default function (pi: ExtensionAPI) {
               output: totals.output,
               cacheHitRate: totals.cacheHitRate,
               cost: totals.cost,
+              todayCost: todayBase + totals.todayCost,
             },
             currency,
           )
@@ -388,9 +476,12 @@ export default function (pi: ExtensionAPI) {
     reading = null
     requestAt = null
     totalDecodeMs = 0
+    totalMeasuredOutput = 0
     stopTicker()
     resetStream()
     currency = await loadCurrency((message) => ctx.ui.notify(message, 'warning'))
+    const file = ctx.sessionManager.getSessionFile()
+    todayBase = await sumOtherTodaysCost(file ?? null, startOfToday())
     installFooter(ctx)
   })
 
@@ -470,8 +561,11 @@ export default function (pi: ExtensionAPI) {
     const measured = ttftMs(requestAt, firstTokenAt)
     const tokens = output > 0 ? output : totalChars * (ratio ?? FALLBACK_TOKENS_PER_CHAR)
     if (measured !== null && decodeMs >= MIN_SAMPLE_MS) {
-      // Session-average numerator lives in collectTotals; this is its denominator.
+      // The average's numerator and denominator must cover the same messages: totals.output spans
+      // the whole session (a reload replays none of it), so pairing it with the partial denominator
+      // below once produced an Avg of 4324 tok/s.
       totalDecodeMs += decodeMs
+      if (output > 0) totalMeasuredOutput += output
       publish((tokens / decodeMs) * 1000, output > 0, measured)
     }
     // Null it with the stream: a request that has produced its message is no longer in flight, and

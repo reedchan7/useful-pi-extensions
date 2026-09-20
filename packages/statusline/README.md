@@ -8,7 +8,7 @@ Replaces pi's footer with a labelled two-row one. Every value carries a word, so
 decoded from a symbol or remembered from a legend.
 
 ```
-Context  █████████▍░░░░░░░░░░  47.1%   471k / 1.0M                   Input 194k  ·  Output 89k  ·  Cache hit 99.9%  ·  Cost $0.229
+Context  █████████▍░░░░░░░░░░  47%   471k / 1.0M     Input 194k  ·  Output 89k  ·  Cache hit 99.9%  ·  Cost $0.229  ·  Today $1.63
 ~/.pi (master)                                                               deepseek-flash · Effort high · TTFT 482ms · 729 tok/s
 LSP Active: typescript
 ```
@@ -19,17 +19,18 @@ columns only the meter is left. Every step is a whole value — a number is neve
 
 ## What each part is
 
-| Part                        | Meaning                                                                                                                                                                                      |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Context` + meter + `47.1%` | Share of the model's context window in use. The fill turns `warning` above 70% and `error` above 90%, the same thresholds pi's shipped footer uses, and the percentage changes color with it |
-| `471k / 1.0M`               | Absolute context tokens over the window size. The first thing dropped when the terminal is narrow                                                                                            |
-| `Input` / `Output`          | Session prompt and completion tokens. `Input` counts the prompt tokens that were neither read from nor written to cache, because pi reports those two separately in the same `usage` object  |
-| `Cache hit`                 | The latest turn's cache hit rate, `cacheRead / (input + cacheRead + cacheWrite)`                                                                                                             |
-| `Cost`                      | Session cost, in USD unless a config file names another currency (see below)                                                                                                                 |
-| Effort                      | The active thinking level                                                                                                                                                                    |
-| `TTFT`                      | Time from request dispatch to the first streamed token                                                                                                                                       |
-| `tok/s`                     | Decode throughput, i.e. output tokens per second of decode time                                                                                                                              |
-| Last line                   | Other extensions' `ctx.ui.setStatus()` entries, so they do not silently disappear                                                                                                            |
+| Part                      | Meaning                                                                                                                                                                                      |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Context` + meter + `47%` | Share of the model's context window in use. The fill turns `warning` above 70% and `error` above 90%, the same thresholds pi's shipped footer uses, and the percentage changes color with it |
+| `471k / 1.0M`             | Absolute context tokens over the window size. The first thing dropped when the terminal is narrow                                                                                            |
+| `Input` / `Output`        | Session prompt and completion tokens. `Input` counts the prompt tokens that were neither read from nor written to cache, because pi reports those two separately in the same `usage` object  |
+| `Cache hit`               | The latest turn's cache hit rate, `cacheRead / (input + cacheRead + cacheWrite)`                                                                                                             |
+| `Cost`                    | Session cost, in USD unless a config file names another currency (see below)                                                                                                                 |
+| `Today`                   | Today's running cost across every project, session and model on this machine                                                                                                                 |
+| Effort                    | The active thinking level                                                                                                                                                                    |
+| `TTFT`                    | Time from request dispatch to the first streamed token                                                                                                                                       |
+| `tok/s`                   | Decode throughput, i.e. output tokens per second of decode time                                                                                                                              |
+| Last line                 | Other extensions' `ctx.ui.setStatus()` entries, so they do not silently disappear                                                                                                            |
 
 ## The meter
 

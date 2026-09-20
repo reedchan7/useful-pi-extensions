@@ -347,17 +347,19 @@ describe('contextRow', () => {
     output: 89000,
     cacheHitRate: 99.8,
     cost: 1.612,
+    todayCost: 4.36,
   }
 
   test('shows context pressure, the session volumes, the hit rate and the bill', () => {
     const line = contextRow(plain, 200, parts)
     expect(line).toContain('Context')
-    expect(line).toContain('17.5%')
+    expect(line).toContain('18%')
     expect(line).toContain('175k / 1.0M')
     expect(line).toContain('Input 194k')
     expect(line).toContain('Output 89k')
     expect(line).toContain('Cache hit 99.8%')
     expect(line).toContain('Cost $1.612')
+    expect(line).toContain('Today $4.36')
   })
 
   test('renders the bill in the configured currency', () => {
@@ -371,9 +373,9 @@ describe('contextRow', () => {
   })
 
   test('gives up the tokens/window detail first', () => {
-    // Measured: the full row needs about 115 columns. Below that the detail goes and the
+    // Measured: the full row needs about 111 columns. Below that the detail goes and the
     // volumes stay, so a narrower terminal does not lose the figures this row exists for.
-    const line = contextRow(plain, 110, parts)
+    const line = contextRow(plain, 115, parts)
     expect(line).not.toContain('175k / 1.0M')
     expect(line).toContain('Input 194k')
     expect(line).toContain('Output 89k')
@@ -391,7 +393,7 @@ describe('contextRow', () => {
   test('keeps the meter alone when nothing else fits', () => {
     const line = contextRow(plain, 60, parts)
     expect(line).toContain('Context')
-    expect(line).toContain('17.5%')
+    expect(line).toContain('18%')
     expect(line).not.toContain('Cost')
     expect(line).not.toContain('Cache hit')
   })
@@ -413,6 +415,7 @@ describe('contextRow', () => {
       output: 0,
       cacheHitRate: null,
       cost: 0,
+      todayCost: 0,
     })
     expect(line).toContain('Context')
     expect(line).not.toContain('Input')

@@ -7,7 +7,7 @@
 替换 pi 的 footer，改成带文字标签的两行。每个值都带一个词，不需要靠符号猜、也不需要记图例。
 
 ```
-Context  █████████▍░░░░░░░░░░  47.1%   471k / 1.0M                   Input 194k  ·  Output 89k  ·  Cache hit 99.9%  ·  Cost $0.229
+Context  █████████▍░░░░░░░░░░  47%   471k / 1.0M     Input 194k  ·  Output 89k  ·  Cache hit 99.9%  ·  Cost $0.229  ·  Today $1.63
 ~/.pi (master)                                                               deepseek-flash · Effort high · TTFT 482ms · 729 tok/s
 LSP Active: typescript
 ```
@@ -25,6 +25,7 @@ LSP Active: typescript
 | `Input` / `Output`         | 会话的输入与输出 token 量。`Input` 指既没命中缓存、也没写入缓存的那部分 prompt token，因为 pi 把这两种情况在同一个 `usage` 对象里分开报 |
 | `Cache hit`                | 最近一轮的缓存命中率，`cacheRead / (input + cacheRead + cacheWrite)`                                                                    |
 | `Cost`                     | 会话花费，默认美元；配置了其他币种则换算显示（见下）                                                                                    |
+| `Today`                    | 当天跨项目、跨会话、跨模型的累计花费                                                                                                    |
 | Effort                     | 当前思考等级                                                                                                                            |
 | `TTFT`                     | 从发出请求到第一个流式 token 的耗时                                                                                                     |
 | `tok/s`                    | 解码吞吐，即每秒解码时间产出的输出 token 数                                                                                             |
