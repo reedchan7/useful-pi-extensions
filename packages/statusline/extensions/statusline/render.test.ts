@@ -400,7 +400,8 @@ describe('contextRow', () => {
 
   test('reports an unknown window instead of inventing one', () => {
     const line = contextRow(plain, 200, { ...parts, percent: null, window: 0 })
-    expect(line).toContain('?')
+    // pi reports null percent for models without a context window: an em dash, not a question.
+    expect(line).toContain('--')
     expect(line).not.toContain('175k /')
     // The totals do not depend on the context reading, so they still render.
     expect(line).toContain('Cost $1.612')

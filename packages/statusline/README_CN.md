@@ -52,7 +52,7 @@ LSP Active: typescript
 ## 币种
 
 pi 里所有模型价格都是美元，而且它的 `cost` 字段**不带任何单位**，所以 footer 无从知道你实际是按什么币种付的。
-币种与汇率放在 `~/.pi/agent/statusline.json`：
+币种与汇率放在 `~/.pi/agent/statusline/config.json`——本扩展的所有文件（配置加状态）都集中在这个文件夹里：
 
 ```json
 {

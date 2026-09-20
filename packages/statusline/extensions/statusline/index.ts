@@ -18,10 +18,10 @@
  * stepStartTime; decodeMs = completedTime - firstTokenTime; tok/s = usage.output / (decodeMs / 1000)
  */
 
-import { readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import { stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import type {
   ExtensionAPI,
@@ -61,13 +61,18 @@ const TICK_MS = 250
 const FALLBACK_TOKENS_PER_CHAR = 0.25
 
 /** The status line's own settings file, alongside pi's other per-tool config. */
-const CONFIG_PATH = join(homedir(), '.pi', 'agent', 'statusline.json')
+/** Everything this extension keeps lives in one folder, not loose files relying on name prefixes. */
+const STATUSLINE_DIR = join(homedir(), '.pi', 'agent', 'statusline')
+const CONFIG_PATH = join(STATUSLINE_DIR, 'config.json')
+/** Pre-1.8 locations, migrated out of on first start. */
+const LEGACY_CONFIG = join(homedir(), '.pi', 'agent', 'statusline.json')
 /** Free, keyless, and one request returns every currency — so the cache serves instant switching. */
 const RATES_URL = 'https://open.er-api.com/v6/latest/USD'
 /** Every session on this machine, for the day-cost total that spans projects and models. */
 const SESSIONS_DIR = join(homedir(), '.pi', 'agent', 'sessions')
 /** Where throughput metrics wait out a /reload: keyed by session file, so a reload restores. */
-const STATE_PATH = join(homedir(), '.pi', 'agent', 'statusline-state.json')
+const STATE_PATH = join(STATUSLINE_DIR, 'state.json')
+const LEGACY_STATE = join(homedir(), '.pi', 'agent', 'statusline-state.json')
 const FETCH_TIMEOUT_MS = 5000
 
 function today(): string {
@@ -116,6 +121,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** Coerces a persisted counter back to a non-negative finite number, or 0. */
 function num(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0
+}
+
+/** Moves a pre-1.8 flat file into the extension folder; missing files are the normal case. */
+async function migrateLegacyFile(legacy: string, current: string): Promise<void> {
+  try {
+    await mkdir(dirname(current), { recursive: true })
+    await rename(legacy, current)
+  } catch {
+    // Nothing at the old path, or already migrated: either way the current file rules.
+  }
 }
 
 /** Today's provider cost of one session-file line, or null when the line bills nothing today. */
@@ -191,6 +206,8 @@ async function loadCurrency(notify: (message: string) => void): Promise<Currency
   const { currency, pending, problem } = currencyFromConfig(text)
   if (problem !== null) notify(problem)
   if (pending === null) return currency
+  // Costs are already USD; a rates fetch could only ever return 1.
+  if (pending.code === 'USD') return USD
 
   const cached = cachedRates(text)
   const known = cached?.rates[pending.code]
@@ -337,6 +354,12 @@ export default function (pi: ExtensionAPI) {
   let totalTtftMs = 0
   let ttftCount = 0
   let todayBase = 0
+  /** Last context usage pi reported with real numbers, shown when pi's current answer is stale. */
+  let lastKnownUsage: {
+    tokens: number | null
+    percent: number | null
+    contextWindow: number
+  } | null = null
   let ticker: ReturnType<typeof setInterval> | null = null
   let windowAt = 0
   let windowTokens = 0
@@ -428,15 +451,22 @@ export default function (pi: ExtensionAPI) {
         },
         render(width: number): string[] {
           const usage = ctx.getContextUsage()
+          // pi nulls tokens and percent when the last usage predates a compaction and no response
+          // has landed since: the numbers it could hand over are stale, not zero. Show the last
+          // reading we trusted instead; a brand-new session starts at 0, which is near the truth.
+          const trusted =
+            usage !== undefined && usage.tokens !== null && usage.percent !== null ? usage : null
+          if (trusted !== null) lastKnownUsage = trusted
+          const shown = trusted ?? lastKnownUsage
           const totals = collectTotals(ctx, startOfToday())
           const avg = avgTokPerSec(totalMeasuredOutput, totalDecodeMs)
           const row1 = contextRow(
             theme,
             width,
             {
-              percent: usage?.percent ?? null,
-              tokens: usage?.tokens ?? 0,
-              window: usage?.contextWindow ?? ctx.model?.contextWindow ?? 0,
+              percent: shown?.percent ?? 0,
+              tokens: shown?.tokens ?? 0,
+              window: usage?.contextWindow ?? shown?.contextWindow ?? ctx.model?.contextWindow ?? 0,
               input: totals.input,
               output: totals.output,
               cacheHitRate: totals.cacheHitRate,
@@ -547,6 +577,9 @@ export default function (pi: ExtensionAPI) {
     stopTicker()
     resetStream()
     currency = await loadCurrency((message) => ctx.ui.notify(message, 'warning'))
+    lastKnownUsage = null
+    await migrateLegacyFile(LEGACY_CONFIG, CONFIG_PATH)
+    await migrateLegacyFile(LEGACY_STATE, STATE_PATH)
     const file = ctx.sessionManager.getSessionFile()
     await restore(file ?? null)
     todayBase = await sumOtherTodaysCost(file ?? null, startOfToday())

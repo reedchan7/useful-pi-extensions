@@ -8,7 +8,7 @@
  * knows needs no fetch at all. The extension reads the file once per session, so finish /reload.
  */
 
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -22,14 +22,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-const path = join(homedir(), '.pi', 'agent', 'statusline.json')
+const dir = join(homedir(), '.pi', 'agent', 'statusline')
+const path = join(dir, 'config.json')
+const legacy = join(homedir(), '.pi', 'agent', 'statusline.json')
 
 let config: Record<string, unknown> = {}
 try {
   const parsed: unknown = JSON.parse(await readFile(path, 'utf8'))
   if (isRecord(parsed)) config = parsed
 } catch {
-  // A missing or unreadable file starts fresh rather than failing: the switch is the point.
+  // Pre-1.8 flat config, or none at all: either way the switch starts from what is readable.
+  try {
+    const parsed: unknown = JSON.parse(await readFile(legacy, 'utf8'))
+    if (isRecord(parsed)) config = parsed
+  } catch {}
 }
 
 config.currency = {
@@ -37,5 +43,7 @@ config.currency = {
   code,
 }
 
+await mkdir(dir, { recursive: true })
 await writeFile(path, `${JSON.stringify(config, null, 2)}\n`)
+await unlink(legacy).catch(() => {})
 console.log(`statusline currency set to ${code}. /reload (or restart pi) to apply.`)

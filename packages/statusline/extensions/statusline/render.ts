@@ -429,7 +429,7 @@ export function contextRow(
   const percent = theme.fg(
     percentColor(parts.percent),
     // Whole percents: the meter carries the precision, and a decimal here is noise.
-    parts.percent === null ? '?' : `${Math.round(parts.percent)}%`,
+    parts.percent === null ? '--' : `${Math.round(parts.percent)}%`,
   )
   const meter = `${theme.fg('dim', 'Context')}  ${bar(theme, BAR_CELLS, fraction)}  ${percent}`
   const detail =

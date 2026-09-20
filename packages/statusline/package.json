@@ -1,6 +1,6 @@
 {
   "name": "@reedchan/statusline",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Replaces pi's footer with a labelled two-row status line: context pressure as a fixed-size meter, cache and cost, the model and effort level, and the latest turn's TTFT and decode throughput in tokens/second.",
   "keywords": [
     "bun",

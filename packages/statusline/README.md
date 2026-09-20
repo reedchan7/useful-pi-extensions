@@ -54,7 +54,8 @@ Configuration lives at the top of [`render.ts`](render.ts):
 ## Currency
 
 pi prices every model in USD and its `cost` field carries no unit at all, so the footer cannot know
-what you were actually billed. The currency and the rate live in `~/.pi/agent/statusline.json`:
+what you were actually billed. The currency and the rate live in `~/.pi/agent/statusline/config.json` — everything this
+extension keeps (config plus the reload-proof state file) sits in that one folder:
 
 ```json
 {
