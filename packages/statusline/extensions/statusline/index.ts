@@ -18,10 +18,9 @@
  * stepStartTime; decodeMs = completedTime - firstTokenTime; tok/s = usage.output / (decodeMs / 1000)
  */
 
-import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
-import { stat } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import type {
   ExtensionAPI,
@@ -71,8 +70,11 @@ const RATES_URL = 'https://open.er-api.com/v6/latest/USD'
 /** Every session on this machine, for the day-cost total that spans projects and models. */
 const SESSIONS_DIR = join(homedir(), '.pi', 'agent', 'sessions')
 /** Where throughput metrics wait out a /reload: keyed by session file, so a reload restores. */
-const STATE_PATH = join(STATUSLINE_DIR, 'state.json')
+/** One state file per session, so two concurrent sessions cannot clobber each other. */
+const STATE_DIR = join(STATUSLINE_DIR, 'state')
 const LEGACY_STATE = join(homedir(), '.pi', 'agent', 'statusline-state.json')
+/** The 1.8 single-file state: one bucket every session shared, also migrated to per-session. */
+const LEGACY_SHARED_STATE = join(STATUSLINE_DIR, 'state.json')
 const FETCH_TIMEOUT_MS = 5000
 
 function today(): string {
@@ -130,6 +132,40 @@ async function migrateLegacyFile(legacy: string, current: string): Promise<void>
     await rename(legacy, current)
   } catch {
     // Nothing at the old path, or already migrated: either way the current file rules.
+  }
+}
+
+/** Per-session state path: the session file's name is unique and stable across reloads. */
+function statePath(sessionFile: string): string {
+  return join(STATE_DIR, `${basename(sessionFile)}.json`)
+}
+
+/** Moves a shared-bucket state file to its per-session name; garbage in, ignored out. */
+async function migrateLegacyState(legacy: string): Promise<void> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(legacy, 'utf8'))
+    if (!isRecord(parsed) || typeof parsed.sessionFile !== 'string') return
+    await mkdir(STATE_DIR, { recursive: true })
+    await rename(legacy, statePath(parsed.sessionFile))
+  } catch {
+    // Nothing to migrate, or the file was not ours: leave it alone.
+  }
+}
+
+/** Drops per-session state untouched for a week; older files restore nothing useful. */
+async function pruneState(): Promise<void> {
+  try {
+    const files = await readdir(STATE_DIR)
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000
+    await Promise.all(
+      files.map(async (name) => {
+        const filePath = join(STATE_DIR, name)
+        const stats = await stat(filePath).catch(() => null)
+        if (stats !== null && stats.mtimeMs < cutoff) await unlink(filePath).catch(() => {})
+      }),
+    )
+  } catch {
+    // No state dir yet: nothing to prune.
   }
 }
 
@@ -414,19 +450,21 @@ export default function (pi: ExtensionAPI) {
       ttftCount,
       last: reading,
     }
-    void writeFile(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`).catch(() => {})
+    void mkdir(STATE_DIR, { recursive: true })
+      .then(() => writeFile(statePath(sessionFile), `${JSON.stringify(state, null, 2)}\n`))
+      .catch(() => {})
   }
 
-  /** Restores what persist wrote, but only for this exact session file. */
+  /** Restores this session's own state file, written by persist before the reload. */
   async function restore(sessionFile: string | null): Promise<void> {
     if (sessionFile === null) return
     let state: unknown
     try {
-      state = JSON.parse(await readFile(STATE_PATH, 'utf8'))
+      state = JSON.parse(await readFile(statePath(sessionFile), 'utf8'))
     } catch {
       return
     }
-    if (!isRecord(state) || state.sessionFile !== sessionFile) return
+    if (!isRecord(state)) return
     totalDecodeMs = num(state.totalDecodeMs)
     totalMeasuredOutput = num(state.totalMeasuredOutput)
     totalTtftMs = num(state.totalTtftMs)
@@ -579,7 +617,9 @@ export default function (pi: ExtensionAPI) {
     currency = await loadCurrency((message) => ctx.ui.notify(message, 'warning'))
     lastKnownUsage = null
     await migrateLegacyFile(LEGACY_CONFIG, CONFIG_PATH)
-    await migrateLegacyFile(LEGACY_STATE, STATE_PATH)
+    await migrateLegacyState(LEGACY_STATE)
+    await migrateLegacyState(LEGACY_SHARED_STATE)
+    void pruneState()
     const file = ctx.sessionManager.getSessionFile()
     await restore(file ?? null)
     todayBase = await sumOtherTodaysCost(file ?? null, startOfToday())
