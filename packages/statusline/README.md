@@ -7,7 +7,7 @@ English | [中文](README_CN.md)
 Replaces pi's footer with a labelled two-row one. Every value carries a word, so nothing has to be
 decoded from a symbol or remembered from a legend.
 
-```
+```text
 Context  █████████▍░░░░░░░░░░  47%   471k / 1.0M     Input 194k  ·  Output 89k  |  Cache hit 99.9%  |  Cost $0.229  ·  Today $1.63
 ~/.pi (master)                         deepseek-flash · Effort high | TTFT 482ms · Avg TTFT 612ms | Last 729 tok/s · Avg 512 tok/s
 LSP Active: typescript
