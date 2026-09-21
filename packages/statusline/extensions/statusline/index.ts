@@ -32,6 +32,7 @@ import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui'
 import {
   avgTokPerSec,
   breakdownPanel,
+  contentChars,
   contextRow,
   currencyFromConfig,
   detailFromConfig,
@@ -68,7 +69,6 @@ const TICK_MS = 250
 /** Pi's own estimateTokens() heuristic, used only until a real ratio is known. */
 const FALLBACK_TOKENS_PER_CHAR = 0.25
 
-/** The status line's own settings file, alongside pi's other per-tool config. */
 /** Everything this extension keeps lives in one folder, not loose files relying on name prefixes. */
 const STATUSLINE_DIR = join(homedir(), '.pi', 'agent', 'statusline')
 const CONFIG_PATH = join(STATUSLINE_DIR, 'config.json')
@@ -78,8 +78,10 @@ const LEGACY_CONFIG = join(homedir(), '.pi', 'agent', 'statusline.json')
 const RATES_URL = 'https://open.er-api.com/v6/latest/USD'
 /** Every session on this machine, for the day-cost total that spans projects and models. */
 const SESSIONS_DIR = join(homedir(), '.pi', 'agent', 'sessions')
-/** Where throughput metrics wait out a /reload: keyed by session file, so a reload restores. */
-/** One state file per session, so two concurrent sessions cannot clobber each other. */
+/**
+ * Where throughput metrics wait out a /reload: one state file per session, keyed by session file,
+ * so a reload restores its own and two concurrent sessions cannot clobber each other.
+ */
 const STATE_DIR = join(STATUSLINE_DIR, 'state')
 const LEGACY_STATE = join(homedir(), '.pi', 'agent', 'statusline-state.json')
 /** The 1.8 single-file state: one bucket every session shared, also migrated to per-session. */
@@ -120,17 +122,6 @@ async function fetchRates(): Promise<Record<string, number> | null> {
   }
 }
 
-/**
- * Reads the display currency.
- *
- * `perUsd` is a pinned rate and wins untouched; a code without one resolves through the cached rate
- * table — today's table answers instantly, a stale one answers while a fresh one is fetched, and
- * only a first-ever failure speaks up. The whole table is cached because one request returns every
- * currency, which is also what makes switching codes instant and offline.
- *
- * Called once per session on purpose: a footer that stat'ed a file on every frame would be its own
- * bug. Editing the file therefore takes effect on `/reload`.
- */
 function startOfToday(): number {
   const start = new Date()
   start.setHours(0, 0, 0, 0)
@@ -183,7 +174,6 @@ async function pruneState(): Promise<void> {
         const filePath = join(STATE_DIR, name)
         const stats = await stat(filePath).catch(() => null)
         if (stats !== null && stats.mtimeMs < cutoff) await unlink(filePath).catch(() => {})
-        return null
       }),
     )
   } catch {
@@ -253,6 +243,17 @@ async function sumOtherTodaysCost(currentFile: string | null, since: number): Pr
   return costs.reduce((sum, value) => sum + value, 0)
 }
 
+/**
+ * Reads the display currency.
+ *
+ * `perUsd` is a pinned rate and wins untouched; a code without one resolves through the cached rate
+ * table — today's table answers instantly, a stale one answers while a fresh one is fetched, and
+ * only a first-ever failure speaks up. The whole table is cached because one request returns every
+ * currency, which is also what makes switching codes instant and offline.
+ *
+ * Called once per session on purpose: a footer that stat'ed a file on every frame would be its own
+ * bug. Editing the file therefore takes effect on `/reload`.
+ */
 async function loadCurrency(notify: (message: string) => void): Promise<Currency> {
   let text: string | null = null
   try {
@@ -285,37 +286,6 @@ async function loadCurrency(notify: (message: string) => void): Promise<Currency
   if (known !== undefined) return { symbol: pending.symbol, perUsd: known }
   notify(`could not fetch a ${pending.code} rate, showing USD`)
   return USD
-}
-
-/** A content block as providers stream it; every field is read defensively. */
-type ContentBlock = {
-  type?: unknown
-  text?: unknown
-  thinking?: unknown
-  name?: unknown
-  arguments?: unknown
-}
-
-function isContentBlock(value: unknown): value is ContentBlock {
-  return typeof value === 'object' && value !== null
-}
-
-function blockChars(content: unknown): number {
-  if (typeof content === 'string') return content.length
-  if (!Array.isArray(content)) return 0
-
-  let chars = 0
-  for (const raw of content as unknown[]) {
-    if (!isContentBlock(raw)) continue
-    const { type, text, thinking, name, arguments: args } = raw
-    if (type === 'text' && typeof text === 'string') chars += text.length
-    else if (type === 'thinking' && typeof thinking === 'string') chars += thinking.length
-    else if (type === 'toolCall') {
-      const nameLength = typeof name === 'string' ? name.length : 0
-      chars += nameLength + JSON.stringify(args ?? {}).length
-    }
-  }
-  return chars
 }
 
 interface Totals {
@@ -381,13 +351,18 @@ function collectTotals(ctx: ExtensionContext, since: number): Totals {
   return totals
 }
 
+/** Chars for the tokens-per-char ratio: images never stream as text, so they must not dilute it. */
+function ratioChars(content: unknown): number {
+  return contentChars(content, 0)
+}
+
 /** Tokens per character, averaged over recent assistant messages with provider usage. */
 function seedRatio(ctx: ExtensionContext): number | null {
   const samples: number[] = []
   for (const entry of ctx.sessionManager.getBranch().toReversed()) {
     if (entry.type !== 'message' || entry.message.role !== 'assistant') continue
     const output = entry.message.usage.output
-    const chars = blockChars(entry.message.content)
+    const chars = ratioChars(entry.message.content)
     if (output <= 0 || chars <= 0) continue
     samples.push(output / chars)
     if (samples.length >= 5) break
@@ -523,6 +498,15 @@ export default function (pi: ExtensionAPI) {
   }
 
   /**
+   * Drops the in-flight anchor and its clock. A run that ends without a first token (abort,
+   * provider error) must not leave a clock counting against a request that is no longer in flight.
+   */
+  function clearInFlightRequest(): void {
+    requestAt = null
+    stopTicker()
+  }
+
+  /**
    * Writes the throughput metrics so a /reload can restore them.
    *
    * Decode timing only exists in live stream events — pi records nothing per message — so without
@@ -586,13 +570,15 @@ export default function (pi: ExtensionAPI) {
           const shown = trusted ?? lastKnownUsage
           const totals = collectTotals(ctx, startOfToday())
           const avg = avgTokPerSec(totalMeasuredOutput, totalDecodeMs)
+          const contextWindow =
+            usage?.contextWindow ?? shown?.contextWindow ?? ctx.model?.contextWindow ?? 0
           const row1 = contextRow(
             theme,
             width,
             {
               percent: shown?.percent ?? 0,
               tokens: shown?.tokens ?? 0,
-              window: usage?.contextWindow ?? shown?.contextWindow ?? ctx.model?.contextWindow ?? 0,
+              window: contextWindow,
               input: totals.input,
               output: totals.output,
               cacheHitRate: totals.cacheHitRate,
@@ -606,10 +592,9 @@ export default function (pi: ExtensionAPI) {
           // row. The concise footer renders by default; ctrl+q or /breakdown opens the panel.
           let breakdown: string[] | null = null
           if (detailVisible) {
-            const window =
-              usage?.contextWindow ?? shown?.contextWindow ?? ctx.model?.contextWindow ?? 0
             const used = shown?.tokens ?? 0
-            const free = window > 0 ? Math.max(0, window - used - (reserveTokens ?? 0)) : null
+            const free =
+              contextWindow > 0 ? Math.max(0, contextWindow - used - (reserveTokens ?? 0)) : null
             breakdown = breakdownPanel(theme, width, {
               messages: messagesFor(ctx),
               promptParts,
@@ -617,7 +602,7 @@ export default function (pi: ExtensionAPI) {
               reserve: reserveTokens,
               free,
               usedPercent: shown?.percent ?? null,
-              window,
+              window: contextWindow,
               used,
             })
           }
@@ -685,22 +670,19 @@ export default function (pi: ExtensionAPI) {
     })
   }
 
-  // A run that ends without a first token (abort, provider error) must not leave a clock counting
-  // against a request that is no longer in flight.
-  pi.on('turn_end', async () => {
-    requestAt = null
-    stopTicker()
+  // TTFT's request anchor, from the agent loop in pi's docs: turn_start opens the LLM call and
+  // before_provider_request is the last thing pi does before the wire. message_start is not that
+  // moment, and anchoring there made a first token that arrived early read as a clamped 0ms.
+  pi.on('turn_start', clearInFlightRequest)
+  pi.on('before_provider_request', () => {
+    requestAt = Date.now()
+    startTicker()
   })
 
-  pi.on('agent_end', async () => {
-    requestAt = null
-    stopTicker()
-  })
-
-  pi.on('agent_settled', async () => {
-    requestAt = null
-    stopTicker()
-  })
+  // Every way a run can retire retires the in-flight request with it.
+  pi.on('turn_end', clearInFlightRequest)
+  pi.on('agent_end', clearInFlightRequest)
+  pi.on('agent_settled', clearInFlightRequest)
 
   // The prompt and the tool list are inputs to the breakdown line, and both are settled by the
   // time this fires: earlier handlers have chained their changes, so what is captured here is
@@ -750,27 +732,6 @@ export default function (pi: ExtensionAPI) {
     resetStream()
   })
 
-  // TTFT's request anchor, from the agent loop in pi's docs: turn_start opens the LLM call and
-  // before_provider_request is the last thing pi does before the wire. message_start is not that
-  // moment, and anchoring there made a first token that arrived early read as a clamped 0ms.
-  pi.on('turn_start', async () => {
-    requestAt = null
-  })
-
-  pi.on('before_provider_request', async () => {
-    requestAt = Date.now()
-  })
-
-  pi.on('turn_start', async () => {
-    requestAt = null
-    stopTicker()
-  })
-
-  pi.on('before_provider_request', async () => {
-    requestAt = Date.now()
-    startTicker()
-  })
-
   pi.on('message_update', async (event) => {
     const delta = event.assistantMessageEvent
     // Narrowing on the discriminant is what keeps the payload typed; membership in
@@ -811,7 +772,7 @@ export default function (pi: ExtensionAPI) {
 
     const message = event.message as { content: unknown; usage?: { output?: number } }
     const output = message.usage?.output ?? 0
-    const totalChars = blockChars(message.content)
+    const totalChars = ratioChars(message.content)
     if (output > 0 && totalChars > 0) {
       const sample = output / totalChars
       ratio = ratio === null ? sample : (ratio + sample) / 2

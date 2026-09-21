@@ -192,15 +192,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
-/**
- * Validates a `currency` block.
- *
- * A rate that is missing, zero, negative or not a number is refused rather than defaulted: a
- * confident wrong amount is worse than the unconverted one the caller falls back to.
- *
- * @param raw - The `currency` value from a parsed config file.
- * @returns The currency, or null when the block could not be used.
- */
 /** The identity a currency block asks for: the API code and the symbol to print. */
 interface CurrencyIdentity {
   code: string
@@ -214,6 +205,15 @@ function currencyIdentity(raw: Record<string, unknown>): CurrencyIdentity | null
   return symbol === '' ? null : { code, symbol }
 }
 
+/**
+ * Validates a `currency` block.
+ *
+ * A rate that is missing, zero, negative or not a number is refused rather than defaulted: a
+ * confident wrong amount is worse than the unconverted one the caller falls back to.
+ *
+ * @param raw - The `currency` value from a parsed config file.
+ * @returns The currency, or null when the block could not be used.
+ */
 export function parseCurrency(raw: unknown): Currency | null {
   if (!isRecord(raw)) return null
   const rate = raw.perUsd
@@ -349,7 +349,6 @@ export function withCachedRates(
   return `${JSON.stringify({ ...config, rates, fetchedAt }, null, 2)}\n`
 }
 
-/** Two decimals, with padding zeros trimmed so `$0.30` renders as `$0.3`. */
 /**
  * Two decimals, with the padding zeros trimmed so `$0.30` renders as `$0.3`.
  *
@@ -628,8 +627,14 @@ export function tokensFromChars(chars: number): number {
 /** Images carry this many estimated characters each, pi's own ESTIMATED_IMAGE_CHARS. */
 const IMAGE_CHARS = 4800
 
-/** Characters of message content: strings, text blocks, tool calls and image placeholders. */
-export function contentChars(content: unknown): number {
+/**
+ * Characters of message content: strings, text blocks, tool calls and image placeholders.
+ *
+ * @param imageChars - What one image block counts for. The breakdown panel pays pi's full estimate;
+ *   the stream ratio passes 0, because images never arrive as streamed text and would dilute a
+ *   tokens-per-character reading with phantom characters.
+ */
+export function contentChars(content: unknown, imageChars = IMAGE_CHARS): number {
   if (typeof content === 'string') return content.length
   if (!Array.isArray(content)) return 0
   let chars = 0
@@ -638,7 +643,7 @@ export function contentChars(content: unknown): number {
     if (raw.type === 'text' && typeof raw.text === 'string') chars += raw.text.length
     else if (raw.type === 'thinking' && typeof raw.thinking === 'string')
       chars += raw.thinking.length
-    else if (raw.type === 'image') chars += IMAGE_CHARS
+    else if (raw.type === 'image') chars += imageChars
     else if (raw.type === 'toolCall') {
       const name = typeof raw.name === 'string' ? raw.name.length : 0
       let args = 0

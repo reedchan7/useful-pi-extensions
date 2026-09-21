@@ -21,7 +21,7 @@ pre-commit:
       run: bun run docs:check
 
     - name: whitespace
-      run: git diff --cached --check
+      run: git --no-pager diff --cached --check
 
 pre-push:
   jobs:

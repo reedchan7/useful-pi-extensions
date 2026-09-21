@@ -189,17 +189,6 @@ describe('ratesFromPayload', () => {
   })
 })
 
-describe('ratesFromPayload', () => {
-  test('keeps every positive finite rate and drops the rest', () => {
-    expect(ratesFromPayload({ rates: { USD: 1, CNY: 7.12, JPY: -1, X: 'x' } })).toEqual({
-      USD: 1,
-      CNY: 7.12,
-    })
-    expect(ratesFromPayload({ result: 'success' })).toEqual({})
-    expect(ratesFromPayload('nope')).toEqual({})
-  })
-})
-
 describe('cachedRates, cacheIsFresh and withCachedRates', () => {
   const file =
     '{"currency":{"code":"CNY"},"rates":{"CNY":7.14,"JPY":155.2},"fetchedAt":"2026-09-20"}'
