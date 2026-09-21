@@ -20,6 +20,7 @@ import {
   currencyFromConfig,
   detailFromConfig,
   entryChars,
+  entryCost,
   formatCost,
   formatLatency,
   formatTokens,
@@ -620,6 +621,90 @@ describe('entryChars and messagesTokens', () => {
     expect(
       messagesTokens([{ type: 'message', message: { role: 'user', content: 'abcd' } }, null]),
     ).toBe(1)
+  })
+})
+
+describe('entryCost', () => {
+  const since = Date.parse('2026-09-21T00:00:00Z')
+
+  test('bills a message from the usage pi nests under `message`', () => {
+    // Reading `entry.usage` alone skipped every message, the bulk of a session's bill, so the
+    // cross-session day total collapsed to the rare compaction line.
+    expect(
+      entryCost(
+        {
+          type: 'message',
+          timestamp: '2026-09-21T01:00:00Z',
+          message: { role: 'assistant', usage: { cost: { total: 0.25 } } },
+        },
+        since,
+      ),
+    ).toBe(0.25)
+    expect(
+      entryCost(
+        {
+          type: 'message',
+          timestamp: '2026-09-21T01:00:00Z',
+          message: { role: 'toolResult', usage: { cost: { total: 0.05 } } },
+        },
+        since,
+      ),
+    ).toBe(0.05)
+  })
+
+  test('bills compaction and branch summaries from the top level', () => {
+    expect(
+      entryCost(
+        { type: 'compaction', timestamp: '2026-09-21T01:00:00Z', usage: { cost: { total: 0.5 } } },
+        since,
+      ),
+    ).toBe(0.5)
+    expect(
+      entryCost(
+        {
+          type: 'branch_summary',
+          timestamp: '2026-09-21T01:00:00Z',
+          usage: { cost: { total: 0.1 } },
+        },
+        since,
+      ),
+    ).toBe(0.1)
+  })
+
+  test('ignores entries from before today, unbilled roles and entries with no cost', () => {
+    expect(
+      entryCost(
+        {
+          type: 'message',
+          timestamp: '2026-09-20T23:59:59Z',
+          message: { role: 'assistant', usage: { cost: { total: 1 } } },
+        },
+        since,
+      ),
+    ).toBeNull()
+    expect(
+      entryCost(
+        {
+          type: 'message',
+          timestamp: '2026-09-21T01:00:00Z',
+          message: { role: 'user', usage: { cost: { total: 1 } } },
+        },
+        since,
+      ),
+    ).toBeNull()
+    expect(entryCost({ type: 'label', timestamp: '2026-09-21T01:00:00Z' }, since)).toBeNull()
+    expect(
+      entryCost(
+        { type: 'message', timestamp: '2026-09-21T01:00:00Z', message: { role: 'assistant' } },
+        since,
+      ),
+    ).toBeNull()
+    expect(
+      entryCost(
+        { type: 'compaction', timestamp: '2026-09-21T01:00:00Z', usage: { cost: {} } },
+        since,
+      ),
+    ).toBeNull()
   })
 })
 

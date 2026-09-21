@@ -36,6 +36,7 @@ import {
   contextRow,
   currencyFromConfig,
   detailFromConfig,
+  entryCost,
   formatCwd,
   formatLatency,
   formatTps,
@@ -181,22 +182,6 @@ async function pruneState(): Promise<void> {
   }
 }
 
-/** Today's provider cost of one session-file line, or null when the line bills nothing today. */
-function entryCost(line: string, since: number): number | null {
-  if (!line.includes('"usage"')) return null
-  let entry: unknown
-  try {
-    entry = JSON.parse(line)
-  } catch {
-    return null
-  }
-  if (!isRecord(entry) || typeof entry.timestamp !== 'string') return null
-  if (Date.parse(entry.timestamp) < since) return null
-  if (!isRecord(entry.usage) || !isRecord(entry.usage.cost)) return null
-  const total = entry.usage.cost.total
-  return typeof total === 'number' && Number.isFinite(total) ? total : null
-}
-
 /**
  * Today's cost across every other session on this machine.
  *
@@ -234,7 +219,16 @@ async function sumOtherTodaysCost(currentFile: string | null, since: number): Pr
       const text = await readFile(path, 'utf8').catch(() => '')
       let total = 0
       for (const line of text.split('\n')) {
-        const cost = entryCost(line, since)
+        // The usage substring is a cheap filter: every billing line carries it, and skipping the
+        // parse for the rest is what keeps a large session file cheap to scan.
+        if (!line.includes('"usage"')) continue
+        let entry: unknown
+        try {
+          entry = JSON.parse(line)
+        } catch {
+          continue
+        }
+        const cost = entryCost(entry, since)
         if (cost !== null) total += cost
       }
       return total

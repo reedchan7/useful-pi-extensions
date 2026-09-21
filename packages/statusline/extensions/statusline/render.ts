@@ -693,6 +693,33 @@ export function messagesTokens(entries: readonly unknown[]): number {
 }
 
 /**
+ * Today's provider cost of one session entry, or null when the entry bills nothing today.
+ *
+ * Pi does not keep usage in one place: message entries nest it under `message`, and only compaction
+ * and branch summaries carry it at the top level. Reading just the top level is what left the
+ * cross-session day total counting summaries alone, a fraction of what the day actually spent.
+ */
+export function entryCost(entry: unknown, since: number): number | null {
+  if (!isRecord(entry) || typeof entry.timestamp !== 'string') return null
+  if (Date.parse(entry.timestamp) < since) return null
+  const usage = pricedUsage(entry)
+  if (!isRecord(usage) || !isRecord(usage.cost)) return null
+  const total = usage.cost.total
+  return typeof total === 'number' && Number.isFinite(total) ? total : null
+}
+
+/** Where one session entry keeps its provider usage, or null when the entry bills nothing. */
+function pricedUsage(entry: Record<string, unknown>): unknown {
+  if (entry.type === 'message') {
+    const message = entry.message
+    if (!isRecord(message)) return null
+    return message.role === 'assistant' || message.role === 'toolResult' ? message.usage : null
+  }
+  if (entry.type === 'compaction' || entry.type === 'branch_summary') return entry.usage
+  return null
+}
+
+/**
  * The inner text and the full tagged span of one system-prompt section, or null when absent.
  *
  * Pi renders every section as `<tag>\n...\n</tag>` (buildSystemPromptSections), so a plain indexOf
